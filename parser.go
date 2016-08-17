@@ -49,6 +49,9 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 
 			switch item {
 			case ':':
+				if i+1 >= msgLen {
+					return nil, errors.New("Invalid Block arrangement. Blocks must follow {contents} rule.")
+				}
 
 				piece := msg[i-1]
 				var nxtPiece []byte
@@ -83,6 +86,10 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 				}
 
 				// Are we at message end and do are we starting a new block?
+				if msg[i+1] == ':' && i+2 >= msgLen {
+					return nil, errors.New("Invalid new Block start")
+				}
+
 				if msg[i+1] == ':' && msg[i+2] == '{' {
 					block = append(block, item)
 					blocks = append(blocks, block)

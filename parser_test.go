@@ -22,6 +22,35 @@ func TestParserBlocks(t *testing.T) {
 	logPassed(t, "Should have parsed blocks: %+s", blocks)
 }
 
+func TestBadBlock(t *testing.T) {
+	block, err := netd.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\n\r}":`))
+	if err != nil {
+		logPassed(t, "Should have failed to parse blocks: %+s", err)
+		return
+	}
+
+	fatalFailed(t, "Should have failed to parse blocks: %+s", block)
+}
+
+func TestBadParserBlocks(t *testing.T) {
+	_, err := netd.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\n\r}"}:`))
+	if err != nil {
+		logPassed(t, "Should have failed to parse blocks: %+s", err)
+		return
+	}
+
+	fatalFailed(t, "Should have failed to parse blocks")
+}
+
+func TestComplexParserBlocks(t *testing.T) {
+	blocks, err := netd.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\n\r}"}:{+SUBS|R|}\r\n`))
+	if err != nil {
+		fatalFailed(t, "Should have parsed blocks: %s", err)
+	}
+
+	logPassed(t, "Should have parsed blocks: %+s", blocks)
+}
+
 func logPassed(t *testing.T, msg string, data ...interface{}) {
 	t.Logf("%s %s", fmt.Sprintf(msg, data...), succeedMark)
 }
