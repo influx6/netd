@@ -112,5 +112,6 @@ func (bp *BaseProvider) ReadLoop(context interface{}, loopFn func(*BaseProvider)
 
 	bp.ProviderLock.Lock()
 	close(bp.Closer)
+	bp.Connection = nil
 	bp.ProviderLock.Unlock()
 }

@@ -3,6 +3,12 @@ package netd
 import "time"
 
 const (
+	// CRTLine defines the control line value which must end all packets.
+	CRTLLine = `\r\n`
+
+	// CRTLineLen caches the length of a control line.
+	CRTLLineLen = len(CRTLLine)
+
 	// VERSION is the current version for the server.
 	VERSION = "0.0.1"
 
@@ -59,7 +65,14 @@ const (
 )
 
 var (
-	emptyString = []byte("")
-	newLine     = []byte("\n")
-	endTrace    = []byte("End Trace")
+	emptyString       = []byte("")
+	endTrace          = []byte("End Trace")
+	ctrlLine          = []byte(CRTLLine)
+	newLine           = []byte("\n")
+	newCl             = []byte("\r")
+	colon             = byte(':')
+	endBracket        = byte('}')
+	beginBracket      = byte('{')
+	endColonBracket   = []byte("}:")
+	beginColonBracket = []byte(":{")
 )
