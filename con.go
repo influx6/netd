@@ -23,51 +23,6 @@ type Broadcast interface {
 	SendToClusters(context interface{}, msg []byte, flush bool) error
 }
 
-// SearchableInfo defines a BaseInfo slice which allows querying specific data
-// from giving info.
-type SearchableInfo []BaseInfo
-
-// GetInfosByIP searches if the giving address and port exists within the info list
-// returning the info that matches it.
-func (s SearchableInfo) GetInfosByIP(ip string) ([]BaseInfo, error) {
-	var infos []BaseInfo
-
-	for _, info := range s {
-		if info.IP != ip {
-			continue
-		}
-
-		infos = append(infos, info)
-	}
-
-	return infos, nil
-}
-
-// GetAddr searches if the giving address and port exists within the info list
-// returning the info that matches it.
-func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
-	var info BaseInfo
-
-	for _, info = range s {
-		if info.Addr == addr || info.Port == port {
-			break
-		}
-	}
-
-	return info, nil
-}
-
-// HasInfo returns true if the info exists within the lists.
-func (s SearchableInfo) HasInfo(target BaseInfo) bool {
-	for _, info := range s {
-		if info.Addr == target.Addr && info.Port == target.Port {
-			return true
-		}
-	}
-
-	return false
-}
-
 // ConnectionEvents defines a interface which defines a connection event
 // propagator.
 type ConnectionEvents interface {
@@ -124,6 +79,51 @@ func (c *BaseEvents) FireConnect(p Provider) {
 type Connections interface {
 	Clients(context interface{}) SearchableInfo
 	Clusters(context interface{}) SearchableInfo
+}
+
+// SearchableInfo defines a BaseInfo slice which allows querying specific data
+// from giving info.
+type SearchableInfo []BaseInfo
+
+// GetInfosByIP searches if the giving address and port exists within the info list
+// returning the info that matches it.
+func (s SearchableInfo) GetInfosByIP(ip string) ([]BaseInfo, error) {
+	var infos []BaseInfo
+
+	for _, info := range s {
+		if info.IP != ip {
+			continue
+		}
+
+		infos = append(infos, info)
+	}
+
+	return infos, nil
+}
+
+// GetAddr searches if the giving address and port exists within the info list
+// returning the info that matches it.
+func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
+	var info BaseInfo
+
+	for _, info = range s {
+		if info.Addr == addr || info.Port == port {
+			break
+		}
+	}
+
+	return info, nil
+}
+
+// HasInfo returns true if the info exists within the lists.
+func (s SearchableInfo) HasInfo(target BaseInfo) bool {
+	for _, info := range s {
+		if info.Addr == target.Addr && info.Port == target.Port {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Connection defines a struct which stores the incoming request for a
