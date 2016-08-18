@@ -27,14 +27,45 @@ func (blockMessage) Parse(msg []byte) ([]Message, error) {
 	return messages, nil
 }
 
+// SplitParts splits the parts of a message block divided by a vertical bar(`|`)
+// symbol. It spits out the parts into their seperate enitites.
+func (blockMessage) SplitParts(msg []byte) [][]byte {
+	var dataBlocks [][]byte
+
+	var block []byte
+	msgLen := len(msg)
+
+	var symbol byte
+	var symbolFound bool
+	var dashFound bool
+
+	for i := 0; i < msgLen; i++ {
+		item := msg[i]
+
+		if item == '|' {
+			if dashFound && !symbolFound {
+				symbolFound = found
+				continue
+			}
+
+			if dashFound && symbolFound {
+			}
+
+			dataBlocks = append(dataBlocks, block)
+			dashFound = true
+			block = nil
+		}
+
+		block = append(block, item)
+	}
+
+	return dataBlocks
+}
+
 // SplitMultiplex will split messages down into their separate parts by
 // breaking patterns of message packs into their seperate parts.
 // multiplex message: `{A|U|Runner}:{+SUBS|R|}\r\n` => []{[]byte("A|U|Runner}\r\n"), []byte("+SUBS|R|bucks\r\n")}.
 func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
-	// if !bytes.HasSuffix(msg, ctrlLine) {
-	// 	return nil, errors.New("Invalid Ending of line")
-	// }
-
 	var blocks [][]byte
 
 	var block []byte
