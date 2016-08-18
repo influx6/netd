@@ -64,8 +64,32 @@ func (blockMessage) SplitParts(msg []byte) [][]byte {
 	msg = bytes.TrimSuffix(msg, endBracketSlice)
 	msgLen := len(msg)
 
+	var excludedBlock bool
+	var excludedDebt int
+
 	for i := 0; i < msgLen; i++ {
 		item := msg[i]
+
+		if item == '(' {
+			excludedBlock = true
+			excludedDebt++
+		}
+
+		if excludedBlock && item == ')' {
+			block = append(block, item)
+			excludedDebt--
+
+			if excludedDebt <= 0 {
+				excludedBlock = false
+			}
+
+			continue
+		}
+
+		if excludedBlock {
+			block = append(block, item)
+			continue
+		}
 
 		if item == '|' {
 			dataBlocks = append(dataBlocks, block)

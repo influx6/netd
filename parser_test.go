@@ -19,6 +19,24 @@ func TestBlockMessageParser(t *testing.T) {
 		fatalFailed(t, "Should have parsed message blocks: %s", err)
 	}
 	logPassed(t, "Should have parsed message blocks: %#q", messages)
+
+	if len(messages) > 2 {
+		fatalFailed(t, "Should have parsed message block as 2 but go %d", len(messages))
+	}
+	logPassed(t, "Should have parsed message block as 2")
+}
+
+func TestBlockMessageParserWithExcludedBlock(t *testing.T) {
+	messages, err := netd.BlockParser.Parse([]byte(`{A|U|Runner|(U | F || JR (Read | UR))}\r\n`))
+	if err != nil {
+		fatalFailed(t, "Should have parsed message blocks: %s", err)
+	}
+	logPassed(t, "Should have parsed message blocks: %#q", messages)
+
+	if len(messages) > 1 {
+		fatalFailed(t, "Should have parsed message block as one but go %d", len(messages))
+	}
+	logPassed(t, "Should have parsed message block as one")
 }
 
 func TestParserBlocks(t *testing.T) {
