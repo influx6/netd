@@ -17,31 +17,22 @@ import (
 type TCPConn struct {
 	Stat
 
-	mc     sync.Mutex
-	config Config
-	sid    string
-
-	infoTCP     BaseInfo
-	infoCluster BaseInfo
-
-	tcpClient  net.Listener
-	tcpCluster net.Listener
-
-	clients  []Provider
-	clusters []Provider
-
-	onConnects    []func(Provider)
-	onDisconnects []func(Provider)
-
-	onClusterConnects    []func(Provider)
-	onClusterDisconnects []func(Provider)
-
+	mc             sync.Mutex
+	sid            string
+	config         Config
+	clientEvents   *BaseEvents
+	clusterEvents  *BaseEvents
+	infoTCP        BaseInfo
+	infoCluster    BaseInfo
+	tcpClient      net.Listener
+	tcpCluster     net.Listener
+	clients        []Provider
+	clusters       []Provider
 	runningClient  bool
 	runningCluster bool
-
-	closer chan struct{}
-	conWG  sync.WaitGroup // waitgroup for incoming connections.
-	opWG   sync.WaitGroup // waitgroup for internal servers (client and cluster)
+	closer         chan struct{}
+	conWG          sync.WaitGroup // waitgroup for incoming connections.
+	opWG           sync.WaitGroup // waitgroup for internal servers (client and cluster)
 }
 
 // TCP returns a new instance of connection provider.
@@ -71,9 +62,11 @@ func TCP(c Config) *TCPConn {
 
 	var cn TCPConn
 	cn.sid = sid
+	cn.config = c
 	cn.infoTCP = info
 	cn.infoCluster = cinfo
-	cn.config = c
+	cn.clientEvents = NewBaseEvent()
+	cn.clusterEvents = NewBaseEvent()
 
 	return &cn
 }
@@ -91,36 +84,6 @@ func (c *TCPConn) Clients(context interface{}) SearchableInfo {
 	return SearchableInfo(infoList)
 }
 
-// OnClientDisonnect adds a function to be called on a client connection disconnect.
-func (c *TCPConn) OnClientDisconnect(fn func(Provider)) {
-	c.mc.Lock()
-	c.onDisconnects = append(c.onDisconnects, fn)
-	c.mc.Unlock()
-}
-
-// OnClientConnect adds a function to be called on a new client connection.
-func (c *TCPConn) OnClientConnect(fn func(Provider)) {
-	c.mc.Lock()
-	c.onConnects = append(c.onConnects, fn)
-	c.mc.Unlock()
-}
-
-func (c *TCPConn) callClientConnects(p Provider) {
-	c.mc.Lock()
-	for _, cnFN := range c.onConnects {
-		cnFN(p)
-	}
-	c.mc.Unlock()
-}
-
-func (c *TCPConn) callClientDisconnects(p Provider) {
-	c.mc.Lock()
-	for _, cnFN := range c.onDisconnects {
-		cnFN(p)
-	}
-	c.mc.Unlock()
-}
-
 // Clusters returns a list of available clusters connections.
 func (c *TCPConn) Clusters(context interface{}) SearchableInfo {
 	var infoList []BaseInfo
@@ -132,36 +95,6 @@ func (c *TCPConn) Clusters(context interface{}) SearchableInfo {
 	c.mc.Unlock()
 
 	return SearchableInfo(infoList)
-}
-
-// OnClusterConnect adds a function to be called on a new connection.
-func (c *TCPConn) OnClusterConnect(fn func(Provider)) {
-	c.mc.Lock()
-	c.onClusterConnects = append(c.onClusterConnects, fn)
-	c.mc.Unlock()
-}
-
-// OnClusterDisonnect adds a function to be called on a connection disconnect.
-func (c *TCPConn) OnClusterDisconnect(fn func(Provider)) {
-	c.mc.Lock()
-	c.onClusterDisconnects = append(c.onClusterDisconnects, fn)
-	c.mc.Unlock()
-}
-
-func (c *TCPConn) callClusterDisconnects(p Provider) {
-	c.mc.Lock()
-	for _, cnFN := range c.onClusterDisconnects {
-		cnFN(p)
-	}
-	c.mc.Unlock()
-}
-
-func (c *TCPConn) callClusterConnects(p Provider) {
-	c.mc.Lock()
-	for _, cnFN := range c.onClusterConnects {
-		cnFN(p)
-	}
-	c.mc.Unlock()
 }
 
 // SendToClusters sends the provided message to all clusters.
@@ -459,6 +392,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 					ConnectionInfo: connInfo,
 					BroadCaster:    c,
 					Connections:    c,
+					Events:         c.clusterEvents,
 					Stat:           stat,
 				}
 
@@ -470,6 +404,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
 					BroadCaster:    c,
+					Events:         c.clusterEvents,
 					Connections:    c,
 					Stat:           stat,
 				}
@@ -512,14 +447,14 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 			go func() {
 				<-provider.CloseNotify()
 				c.conWG.Done()
-				c.callClusterDisconnects(provider)
+				c.clusterEvents.FireDisconnect(provider)
 			}()
 
 			c.mc.Lock()
 			c.clusters = append(c.clusters, provider)
 			c.mc.Unlock()
 
-			c.callClusterConnects(provider)
+			c.clusterEvents.FireConnect(provider)
 
 			continue
 		}
@@ -614,6 +549,7 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 					Config:         config,
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
+					Events:         c.clientEvents,
 					BroadCaster:    c,
 					Connections:    c,
 					Stat:           stat,
@@ -626,6 +562,7 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 					Config:         config,
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
+					Events:         c.clientEvents,
 					BroadCaster:    c,
 					Connections:    c,
 					Stat:           stat,
@@ -669,14 +606,14 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 			go func() {
 				<-provider.CloseNotify()
 				c.conWG.Done()
-				c.callClientDisconnects(provider)
+				c.clientEvents.FireDisconnect(provider)
 			}()
 
 			c.mc.Lock()
 			c.clients = append(c.clients, provider)
 			c.mc.Unlock()
 
-			c.callClientConnects(provider)
+			c.clientEvents.FireConnect(provider)
 
 			continue
 		}

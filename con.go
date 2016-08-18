@@ -68,26 +68,73 @@ func (s SearchableInfo) HasInfo(target BaseInfo) bool {
 	return false
 }
 
+// ConnectionEvents defines a interface which defines a connection event
+// propagator.
+type ConnectionEvents interface {
+	OnConnect(fn func(Provider))
+	OnDisconnect(fn func(Provider))
+}
+
+// NewBaseEvent returns a new instance of a base event.
+func NewBaseEvent() *BaseEvents {
+	var be BaseEvents
+	return &be
+}
+
+// BaseEvents defines a struct which implements the  ConnectionEvents interface.
+type BaseEvents struct {
+	mc            sync.RWMutex
+	onDisconnects []func(Provider)
+	onConnects    []func(Provider)
+}
+
+// OnDisonnect adds a function to be called on a client connection disconnect.
+func (c *BaseEvents) OnDisconnect(fn func(Provider)) {
+	c.mc.Lock()
+	c.onDisconnects = append(c.onDisconnects, fn)
+	c.mc.Unlock()
+}
+
+// OnConnect adds a function to be called on a new client connection.
+func (c *BaseEvents) OnConnect(fn func(Provider)) {
+	c.mc.Lock()
+	c.onConnects = append(c.onConnects, fn)
+	c.mc.Unlock()
+}
+
+// FireConnect passes the provider to all disconnect handlers.
+func (c *BaseEvents) FireDisconnect(p Provider) {
+	c.mc.RLock()
+	for _, cnFN := range c.onDisconnects {
+		cnFN(p)
+	}
+	c.mc.RUnlock()
+}
+
+// FireConnect passes the provider to all connect handlers.
+func (c *BaseEvents) FireConnect(p Provider) {
+	c.mc.RLock()
+	for _, cnFN := range c.onConnects {
+		cnFN(p)
+	}
+	c.mc.RUnlock()
+}
+
 // Connections provides a interfae which lists connected clients and clusters.
 type Connections interface {
 	Clients(context interface{}) SearchableInfo
-	OnClientConnect(fn func(Provider))
-	OnClientDisconnect(fn func(Provider))
-
 	Clusters(context interface{}) SearchableInfo
-	OnClusterConnect(fn func(Provider))
-	OnClusterDisconnect(fn func(Provider))
 }
 
 // Connection defines a struct which stores the incoming request for a
 // connection.
 type Connection struct {
 	net.Conn
-	cw             sync.WaitGroup
 	Config         Config
 	ServerInfo     BaseInfo
 	ConnectionInfo BaseInfo
 	Connections    Connections
+	Events         ConnectionEvents
 	BroadCaster    Broadcast
 	Stat           StatProvider
 }
