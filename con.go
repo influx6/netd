@@ -5,6 +5,15 @@ import (
 	"sync"
 )
 
+// Broadcast defines an interface for sending messages to two classes of
+// listeners, which are clients and clusters. This allows a flexible system for
+// expanding more details from a central controller or within a decentral
+// controller.
+type Broadcast interface {
+	SendToClients(context interface{}, msg []byte, flush bool) error
+	SendToClusters(context interface{}, msg []byte, flush bool) error
+}
+
 // Conn defines an interface which manages the connection creation and accept
 // lifecycle and using the provided ConnHandler produces connections for
 // both clusters and and clients.
@@ -25,15 +34,6 @@ type Provider interface {
 	Close(context interface{}) error
 	SendMessage(context interface{}, msg []byte, flush bool) error
 	CloseNotify() chan struct{}
-}
-
-// Broadcast defines an interface for sending messages to two classes of
-// listeners, which are clients and clusters. This allows a flexible system for
-// expanding more details from a central controller or within a decentral
-// controller.
-type Broadcast interface {
-	SendToClients(context interface{}, msg []byte, flush bool) error
-	SendToClusters(context interface{}, msg []byte, flush bool) error
 }
 
 // Connection defines a struct which stores the incoming request for a
