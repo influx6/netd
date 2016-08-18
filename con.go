@@ -18,6 +18,15 @@ type Conn interface {
 // Connection.
 type Handler func(context interface{}, c *Connection) (Provider, error)
 
+// Provider defines a interface for a connection handler, which ensures
+// to manage the request-response cycle of a provided net.Conn.
+type Provider interface {
+	BaseInfo() BaseInfo
+	Close(context interface{}) error
+	SendMessage(context interface{}, msg []byte, flush bool) error
+	CloseNotify() chan struct{}
+}
+
 // Broadcast defines an interface for sending messages to two classes of
 // listeners, which are clients and clusters. This allows a flexible system for
 // expanding more details from a central controller or within a decentral
@@ -38,15 +47,6 @@ type Connection struct {
 	Events         ConnectionEvents
 	BroadCaster    Broadcast
 	Stat           StatProvider
-}
-
-// Provider defines a interface for a connection handler, which ensures
-// to manage the request-response cycle of a provided net.Conn.
-type Provider interface {
-	BaseInfo() BaseInfo
-	Close(context interface{}) error
-	SendMessage(context interface{}, msg []byte, flush bool) error
-	CloseNotify() chan struct{}
 }
 
 // ConnectionEvents defines a interface which defines a connection event
