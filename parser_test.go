@@ -13,13 +13,27 @@ const succeedMark = "\u2713"
 // failedMark is the Unicode codepoint for an X mark.
 const failedMark = "\u2717"
 
+func TestBlockMessageParser(t *testing.T) {
+	messages, err := netd.BlockParser.Parse([]byte(`{A|U|Runner}:{+SUBS|R|}\r\n`))
+	if err != nil {
+		fatalFailed(t, "Should have parsed message blocks: %s", err)
+	}
+	logPassed(t, "Should have parsed message blocks: %#q", messages)
+}
+
 func TestParserBlocks(t *testing.T) {
 	blocks, err := netd.BlockParser.SplitMultiplex([]byte(`{A|U|Runner}:{+SUBS|R|}\r\n`))
 	if err != nil {
 		fatalFailed(t, "Should have parsed blocks: %s", err)
 	}
-
 	logPassed(t, "Should have parsed blocks: %+s", blocks)
+
+	firstBlock := netd.BlockParser.SplitParts(blocks[0])
+	if len(firstBlock) != 3 {
+		fatalFailed(t, "Should have parsed block[%+s] into 3 parts: %+s", blocks[0], firstBlock)
+	}
+
+	logPassed(t, "Should have parsed block[%+s] into 3 parts: %+s", blocks[0], firstBlock)
 }
 
 func TestBadBlock(t *testing.T) {

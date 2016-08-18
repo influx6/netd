@@ -21,8 +21,34 @@ type blockMessage struct{}
 
 // Parse parses the data data coming in and produces a series of Messages
 // based on a base pattern.
-func (blockMessage) Parse(msg []byte) ([]Message, error) {
+func (b blockMessage) Parse(msg []byte) ([]Message, error) {
 	var messages []Message
+
+	blocks, err := b.SplitMultiplex(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, block := range blocks {
+		if len(block) == 0 {
+			continue
+		}
+
+		blockParts := b.SplitParts(block)
+		var command []byte
+		var data [][]byte
+
+		command = blockParts[0]
+
+		if len(blockParts) > 1 {
+			data = blockParts[1:len(blockParts)]
+		}
+
+		messages = append(messages, Message{
+			Command: command,
+			Data:    data,
+		})
+	}
 
 	return messages, nil
 }
@@ -33,30 +59,26 @@ func (blockMessage) SplitParts(msg []byte) [][]byte {
 	var dataBlocks [][]byte
 
 	var block []byte
-	msgLen := len(msg)
 
-	var symbol byte
-	var symbolFound bool
-	var dashFound bool
+	msg = bytes.TrimPrefix(msg, beginBracketSlice)
+	msg = bytes.TrimSuffix(msg, endBracketSlice)
+	msgLen := len(msg)
 
 	for i := 0; i < msgLen; i++ {
 		item := msg[i]
 
 		if item == '|' {
-			if dashFound && !symbolFound {
-				symbolFound = found
-				continue
-			}
-
-			if dashFound && symbolFound {
-			}
-
 			dataBlocks = append(dataBlocks, block)
-			dashFound = true
 			block = nil
+			continue
 		}
 
 		block = append(block, item)
+	}
+
+	if len(block) != 0 {
+		dataBlocks = append(dataBlocks, block)
+		block = nil
 	}
 
 	return dataBlocks

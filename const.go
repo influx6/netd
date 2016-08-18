@@ -73,6 +73,8 @@ var (
 	colon             = byte(':')
 	endBracket        = byte('}')
 	beginBracket      = byte('{')
+	endBracketSlice   = []byte("}")
+	beginBracketSlice = []byte("{")
 	endColonBracket   = []byte("}:")
 	beginColonBracket = []byte(":{")
 )
