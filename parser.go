@@ -7,12 +7,19 @@ import (
 
 // BlockParser defines a package level parser using the blockMessage specification.
 /* The block message specification is based on the idea of a simple text based
-   messages which follows specific rules about messages which are:
+   protocol which follows specific rules about messages. These rules which are:
 
    1. All messages must end with a CRTL line ending `\r\n`.
-   2. All message must begin with a  opening(`{`) backet and close with a closing(`}`) closing bracket.
-   3. Multiplex messages can be included together by combining messages wrapped by the brackets with a semicolon(`:`) in between.
 
+   2. All message must begin with a  opening(`{`) backet and close with a closing(`}`) closing bracket. eg
+	    `{A|U|Runner}`.
+
+	 3. If we need to seperate messages within brackets that contain characters like '(',')','{','}' or just a part is
+	    kept whole, then using the message exclude block '()' with a message block will make that happen. eg `{A|U|Runner|(U | F || JR (Read | UR))}\r\n`
+			Where `(U | F || JR (Read | UR))` is preserved as a single block when parsed into component blocks.
+
+	 4. Multiplex messages can be included together by combining messages wrapped by the brackets with a semicolon(`:`) in between. eg
+	 		`{A|U|Runner}:{+SUBS|R|}\r\n`.
 */
 var BlockParser blockMessage
 
