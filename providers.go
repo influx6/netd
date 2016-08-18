@@ -9,38 +9,55 @@ import (
 
 // BaseProvider creates a base provider structure for use in writing handlers
 // for connections.
+// When using BaseProvider, it exposes access to a internal mutex, buffered writer
+// and waitgroup. This allows you to write your own read loop and ensuring to call
+// done on the waitgroup that will have a initial count of 1 added to it and to
+// use the writer to write and expand its capacity as you see fit.
 type BaseProvider struct {
 	*Connection
-	running        bool
-	Closer         chan struct{}
-	ProviderLock   sync.Mutex
-	ProviderWriter *bufio.Writer
+	Lock   sync.Mutex
+	Waiter sync.WaitGroup
+	Writer *bufio.Writer
+
+	running bool
+	closer  chan struct{}
 }
 
 // NewBaseProvider returns a new instance of a BaseProvider.
 func NewBaseProvider(conn *Connection) *BaseProvider {
 	var bp BaseProvider
 	bp.Connection = conn
+
+	bp.Waiter.Add(1)
+	bp.running = true
+	bp.closer = make(chan struct{}, 0)
+	bp.Writer = bufio.NewWriterSize(bp.Conn, MIN_DATA_WRITE_SIZE)
+
 	return &bp
 }
 
-// Init initializes the base provider and its internal management system.
-func (bp *BaseProvider) Init(context interface{}) {
-	bp.Closer = make(chan struct{}, 0)
-	bp.running = true
+// Close ends the loop cycle for the baseProvider.
+func (bp *BaseProvider) Close(context interface{}) error {
+	bp.Lock.Lock()
+	bp.running = false
+	bp.Lock.Unlock()
 
-	bp.ProviderLock.Lock()
-	bp.ProviderWriter = bufio.NewWriterSize(bp.Conn, MIN_DATA_WRITE_SIZE)
-	bp.ProviderLock.Unlock()
+	bp.Waiter.Wait()
+	close(bp.closer)
+
+	bp.Lock.Lock()
+	bp.Connection = nil
+	bp.Lock.Unlock()
+	return nil
 }
 
 // IsRunning returns true/false if the base provider is still running.
 func (bp *BaseProvider) IsRunning() bool {
 	var done bool
 
-	bp.ProviderLock.Lock()
+	bp.Lock.Lock()
 	done = bp.running
-	bp.ProviderLock.Unlock()
+	bp.Lock.Unlock()
 
 	return done
 }
@@ -53,17 +70,17 @@ func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush boo
 	}
 
 	var err error
-	if bp.ProviderWriter != nil && bp.Connection != nil && bp.Connection.Conn != nil {
+	if bp.Writer != nil && bp.Connection != nil && bp.Connection.Conn != nil {
 		var deadlineSet bool
 
-		if bp.ProviderWriter.Available() < len(msg) {
+		if bp.Writer.Available() < len(msg) {
 			bp.Conn.SetWriteDeadline(time.Now().Add(DEFAULT_FLUSH_DEADLINE))
 			deadlineSet = true
 		}
 
-		_, err = bp.ProviderWriter.Write(msg)
+		_, err = bp.Writer.Write(msg)
 		if err == nil && doFlush {
-			err = bp.ProviderWriter.Flush()
+			err = bp.Writer.Flush()
 		}
 
 		if deadlineSet {
@@ -79,9 +96,9 @@ func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush boo
 func (bp *BaseProvider) BaseInfo() BaseInfo {
 	var info BaseInfo
 
-	bp.ProviderLock.Lock()
+	bp.Lock.Lock()
 	info = bp.Connection.ConnectionInfo
-	bp.ProviderLock.Unlock()
+	bp.Lock.Unlock()
 
 	return info
 }
@@ -89,29 +106,20 @@ func (bp *BaseProvider) BaseInfo() BaseInfo {
 // CloseNoify returns a chan which allows notification of a close state of
 // the base provider.
 func (bp *BaseProvider) CloseNotify() chan struct{} {
-	return bp.Closer
-}
-
-// Close ends the loop cycle for the baseProvider.
-func (bp *BaseProvider) Close(context interface{}) error {
-	bp.ProviderLock.Lock()
-	bp.running = false
-	bp.ProviderLock.Unlock()
-	return nil
+	return bp.closer
 }
 
 // ReadLoop provides a means of intersecting with the looping mechanism
 // for a BaseProvider, its an optional mechanism to provide a callback
 // like state of behaviour for the way the loop works.
 func (bp *BaseProvider) ReadLoop(context interface{}, loopFn func(*BaseProvider)) {
+	bp.Lock.Lock()
+	defer bp.Waiter.Done()
+	bp.Lock.Unlock()
+
 	{
 		for bp.running {
 			loopFn(bp)
 		}
 	}
-
-	bp.ProviderLock.Lock()
-	close(bp.Closer)
-	bp.Connection = nil
-	bp.ProviderLock.Unlock()
 }
