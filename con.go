@@ -5,13 +5,17 @@ import (
 	"sync"
 )
 
-// Provider defines a interface for a connection handler, which ensures
-// to manage the request-response cycle of a provided net.Conn.
-type Provider interface {
-	BaseInfo() BaseInfo
-	Close(context interface{}) error
-	SendMessage(context interface{}, msg []byte, flush bool) error
-	CloseNotify() chan struct{}
+// Connection defines a struct which stores the incoming request for a
+// connection.
+type Connection struct {
+	net.Conn
+	Config         Config
+	ServerInfo     BaseInfo
+	ConnectionInfo BaseInfo
+	Connections    Connections
+	Events         ConnectionEvents
+	BroadCaster    Broadcast
+	Stat           StatProvider
 }
 
 // Broadcast defines an interface for sending messages to two classes of
@@ -21,6 +25,15 @@ type Provider interface {
 type Broadcast interface {
 	SendToClients(context interface{}, msg []byte, flush bool) error
 	SendToClusters(context interface{}, msg []byte, flush bool) error
+}
+
+// Provider defines a interface for a connection handler, which ensures
+// to manage the request-response cycle of a provided net.Conn.
+type Provider interface {
+	BaseInfo() BaseInfo
+	Close(context interface{}) error
+	SendMessage(context interface{}, msg []byte, flush bool) error
+	CloseNotify() chan struct{}
 }
 
 // ConnectionEvents defines a interface which defines a connection event
@@ -124,19 +137,6 @@ func (s SearchableInfo) HasInfo(target BaseInfo) bool {
 	}
 
 	return false
-}
-
-// Connection defines a struct which stores the incoming request for a
-// connection.
-type Connection struct {
-	net.Conn
-	Config         Config
-	ServerInfo     BaseInfo
-	ConnectionInfo BaseInfo
-	Connections    Connections
-	Events         ConnectionEvents
-	BroadCaster    Broadcast
-	Stat           StatProvider
 }
 
 // Handler defines a function handler which returns a new Provider from a
