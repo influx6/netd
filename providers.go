@@ -2,7 +2,10 @@ package netd
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 )
@@ -60,6 +63,31 @@ func (bp *BaseProvider) IsRunning() bool {
 	bp.Lock.Unlock()
 
 	return done
+}
+
+// Fire sends the provided payload into the provided write stream.
+func (bp *BaseProvider) Fire(context interface{}, params map[string]interface{}, payload interface{}) error {
+	var bu bytes.Buffer
+
+	switch payload.(type) {
+	case io.Reader:
+		reader := payload.(io.Reader)
+		if _, err := io.Copy(&bu, reader); err != nil {
+			return err
+		}
+	case bytes.Buffer:
+		bu = payload.(bytes.Buffer)
+	case bytes.Buffer:
+		bu = payload.(*bytes.Buffer)
+	case []byte:
+		bu.Write(payload.([]byte))
+	default:
+		if err := json.NewEncoder(&bu).Encode(payload); err != nil {
+			return err
+		}
+	}
+
+	return bp.SendMessage(context, bu.Bytes(), true)
 }
 
 // SendMessage sends a message into the provider connection. This exists for

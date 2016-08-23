@@ -30,6 +30,7 @@ type Handler func(context interface{}, c *Connection) (Provider, error)
 // Provider defines a interface for a connection handler, which ensures
 // to manage the request-response cycle of a provided net.Conn.
 type Provider interface {
+	routes.Subscriber
 	BaseInfo() BaseInfo
 	Close(context interface{}) error
 	SendMessage(context interface{}, msg []byte, flush bool) error

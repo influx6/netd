@@ -1,8 +1,21 @@
-package netd
+package parser
 
 import (
 	"bytes"
 	"errors"
+)
+
+var (
+	emptyString       = []byte("")
+	newLine           = []byte("\n")
+	newCl             = []byte("\r")
+	colon             = byte(':')
+	endBracket        = byte('}')
+	beginBracket      = byte('{')
+	endBracketSlice   = []byte("}")
+	beginBracketSlice = []byte("{")
+	endColonBracket   = []byte("}:")
+	beginColonBracket = []byte(":{")
 )
 
 // BlockParser defines a package level parser using the blockMessage specification.

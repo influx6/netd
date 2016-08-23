@@ -1,4 +1,4 @@
-package netd
+package parser
 
 // Message defines a struct that details a specific message piece of a data
 // recieved.
