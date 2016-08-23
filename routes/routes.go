@@ -3,28 +3,34 @@ package routes
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"regexp"
 	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 var (
-	sbl               = "."
-	slash             = byte('/')
-	slashSlice        = []byte{slash}
-	colon             = byte(':')
-	colonSlice        = []byte{colon}
-	emptySlice        = []byte("")
-	sublist           = byte('.')
-	sublistSlice      = []byte{sublist}
-	edges             = byte('^')
-	edgesSlice        = []byte{edges}
-	contains          = byte('*')
-	containsSlice     = []byte{contains}
-	startBracket      = byte('[')
-	startBracketSlice = []byte{startBracket}
-	endBracket        = byte(']')
-	endBracketSlice   = []byte{endBracket}
+	sbl                    = "."
+	slash                  = byte('/')
+	slashSlice             = []byte{slash}
+	colon                  = byte(':')
+	colonSlice             = []byte{colon}
+	emptySlice             = []byte("")
+	sublist                = byte('.')
+	sublistSlice           = []byte{sublist}
+	edges                  = byte('^')
+	edgesSlice             = []byte{edges}
+	contains               = byte('*')
+	containsSlice          = []byte{contains}
+	startBracket           = byte('[')
+	startBracketSlice      = []byte{startBracket}
+	endBracket             = byte(']')
+	endBracketSlice        = []byte{endBracket}
+	startCurlyBracket      = byte('{')
+	startCurlyBracketSlice = []byte{startCurlyBracket}
+	endCurlyBracket        = byte('}')
+	endCurlyBracketSlice   = []byte{endCurlyBracket}
 )
 
 // Trace defines an interface which receives data trace data logs.
@@ -47,7 +53,7 @@ type Subscription struct {
 // New returns a new Subscription which can be used to route to specific
 // subscribers. The variadic argument is used for elegance and to allow zero,
 // zero value tracers.
-func New(strict bool, t ...Trace) *Subscription {
+func New(t ...Trace) *Subscription {
 	var sub Subscription
 
 	var tr Trace
@@ -56,7 +62,7 @@ func New(strict bool, t ...Trace) *Subscription {
 		tr = t[0]
 	}
 
-	sub.root = newLevel(strict, tr)
+	sub.root = newLevel(tr)
 
 	return &sub
 }
@@ -120,18 +126,16 @@ func (s *Subscription) MustUnregister(path []byte, sub Subscriber) {
 //==============================================================================
 
 type level struct {
-	rw         sync.RWMutex
-	strictPath bool
-	tracer     Trace
-	all        *node
-	nodes      map[string]*node
+	rw     sync.RWMutex
+	tracer Trace
+	all    *node
+	nodes  map[string]*node
 }
 
-func newLevel(strictPath bool, tracer Trace) *level {
+func newLevel(tracer Trace) *level {
 	return &level{
-		strictPath: strictPath,
-		tracer:     tracer,
-		nodes:      make(map[string]*node),
+		tracer: tracer,
+		nodes:  make(map[string]*node),
 		all: &node{
 			sid:     containsSlice[0:],
 			matcher: func(b []byte) bool { return true },
@@ -147,6 +151,40 @@ type node struct {
 	matcher func([]byte) bool
 }
 
+func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, params map[string]string, payload interface{}) error {
+	tLen := len(tokens)
+
+	if tLen == 0 {
+		return errors.New("Empty tokens for resolving")
+	}
+
+	token := tokens[0]
+
+	if tLen == 1 {
+		tokens = tokens[:0]
+	} else {
+		tokens = tokens[1:]
+	}
+
+	if !n.matcher(token) {
+		return errors.New("token does not match route")
+	}
+
+	params[string(n.ns)] = string(token)
+
+	for _, sub := range n.subs {
+		recovers(context, func() {
+			sub.Fire(context, params, payload)
+		}, tracer)
+	}
+
+	if n.next != nil && len(tokens) != 0 {
+		return n.next.resolve(context, tokens, params, payload)
+	}
+
+	return nil
+}
+
 // Size returns the total number of nodes on this level.
 func (s *level) Size() int {
 	s.rw.RLock()
@@ -159,7 +197,14 @@ func (s *level) Size() int {
 func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}) error {
 	pLen := len(pattern)
 
+	if pLen == 0 {
+		return errors.New("Invalid Path to route")
+	}
+
+	s.rw.RLock()
 	tracer := s.tracer
+	s.rw.RUnlock()
+
 	params := make(map[string]string)
 
 	if pLen == 1 && pattern[0] == contains {
@@ -181,75 +226,13 @@ func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}
 		return err
 	}
 
-	return s.resolve(context, nil, tokens, params, payload)
+	return s.resolve(context, tokens, params, payload)
 }
 
-func (s *level) resolve(context interface{}, node *node, tokens [][]byte, params map[string]string, payload interface{}) error {
-	tLen := len(tokens)
-
+func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]string, payload interface{}) error {
 	s.rw.RLock()
 	tracer := s.tracer
-	strict := s.strictPath
 	s.rw.RUnlock()
-
-	if tLen == 0 && node == nil {
-		return errors.New("No route found for given path")
-	}
-
-	if tLen == 0 {
-		s.rw.RLock()
-		{
-			for _, sub := range node.subs {
-				recovers(context, func() {
-					sub.Fire(context, params, payload)
-				}, tracer)
-			}
-		}
-		s.rw.RUnlock()
-
-		return nil
-	}
-
-	token := tokens[0]
-
-	if tLen == 1 {
-		tokens = tokens[:0]
-	} else {
-		tokens = tokens[1:]
-	}
-
-	var ok bool
-
-	if node == nil {
-
-		s.rw.RLock()
-		node, ok = s.nodes[string(token)]
-		s.rw.RUnlock()
-
-		if ok && !node.matcher(token) {
-
-			s.rw.RLock()
-			{
-				for _, node = range s.nodes {
-					if !node.matcher(token) {
-						continue
-					}
-				}
-			}
-			s.rw.RUnlock()
-
-		}
-
-		if node == nil {
-			return errors.New("No route matches path")
-		}
-	}
-
-	if ok && !node.matcher(token) {
-		return errors.New("Path fails to match route")
-	}
-
-	params[string(node.ns)] = string(token)
 
 	s.rw.RLock()
 	{
@@ -261,26 +244,23 @@ func (s *level) resolve(context interface{}, node *node, tokens [][]byte, params
 	}
 	s.rw.RUnlock()
 
-	if strict && s.Size() == 0 && tLen > 0 {
-		s.rw.RLock()
-		{
-			for _, inode := range s.nodes {
-				if inode == node {
-					continue
-				}
+	var counter int64
 
-				if !inode.matcher(token) {
-					continue
-				}
-
-				node = inode
-				break
+	s.rw.RLock()
+	{
+		for _, node := range s.nodes {
+			if err := node.resolve(context, tracer, tokens, params, payload); err != nil {
+				atomic.AddInt64(&counter, 1)
 			}
 		}
-		s.rw.RUnlock()
+	}
+	s.rw.RUnlock()
+
+	if atomic.LoadInt64(&counter) == int64(s.Size()) {
+		return errors.New("No route matches path")
 	}
 
-	return node.next.resolve(context, node, tokens, params, payload)
+	return nil
 }
 
 // Add adds a new subscriber into the subscription list with the provided pattern.
@@ -297,12 +277,6 @@ func (s *level) Add(pattern []byte, subscriber Subscriber) error {
 }
 
 func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
-	var strictPath bool
-
-	s.rw.RLock()
-	strictPath = s.strictPath
-	s.rw.RUnlock()
-
 	pLen := len(patterns)
 
 	for i := 0; i < len(patterns); i++ {
@@ -310,6 +284,45 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 		itemLen := len(item)
 
 		var match func([]byte) bool
+
+		if bytes.Contains(item, startCurlyBracketSlice) && bytes.Contains(item, endCurlyBracketSlice) {
+			word, regex := yankRegExp(item)
+
+			if len(word) == 0 {
+				return fmt.Errorf("Regexp token[%q] must include name", item)
+			}
+
+			matchex := regexp.MustCompile(string(regex))
+
+			match = func(d []byte) bool {
+				return matchex.Match(d)
+			}
+
+			s.rw.RLock()
+			nodeItem, ok := s.nodes[string(item)]
+			s.rw.RUnlock()
+			if !ok {
+				nodeItem = &node{
+					next:    newLevel(s.tracer),
+					sid:     item,
+					ns:      word,
+					matcher: match,
+				}
+
+				s.rw.Lock()
+				s.nodes[string(item)] = nodeItem
+				s.rw.Unlock()
+			}
+
+			if i+1 >= pLen {
+				s.rw.Lock()
+				nodeItem.subs = append(nodeItem.subs, subscriber)
+				s.rw.Unlock()
+				return nil
+			}
+
+			return nodeItem.next.add(patterns[i+1:], subscriber)
+		}
 
 		if bytes.Contains(item, edgesSlice) {
 			if itemLen == 1 {
@@ -326,11 +339,9 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 
 					return false
 				}
-
-				continue
 			}
 
-			if bytes.HasPrefix(item, edgesSlice) {
+			if bytes.HasSuffix(item, edgesSlice) {
 				item = item[:itemLen-1]
 
 				match = func(d []byte) bool {
@@ -340,8 +351,6 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 
 					return false
 				}
-
-				continue
 			}
 
 			s.rw.RLock()
@@ -349,9 +358,9 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 			s.rw.RUnlock()
 			if !ok {
 				nodeItem = &node{
-					next:    newLevel(strictPath, s.tracer),
+					next:    newLevel(s.tracer),
 					sid:     item,
-					ns:      nsToken(item),
+					ns:      item,
 					matcher: match,
 				}
 
@@ -371,7 +380,7 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 		}
 
 		if bytes.Contains(item, containsSlice) {
-			if itemLen == 1 {
+			if itemLen == 1 && bytes.Equal(item, containsSlice) {
 				s.all.subs = append(s.all.subs, subscriber)
 				return nil
 			}
@@ -390,75 +399,9 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 			s.rw.RUnlock()
 			if !ok {
 				nodeItem = &node{
-					next:    newLevel(strictPath, s.tracer),
+					next:    newLevel(s.tracer),
 					sid:     item,
-					ns:      nsToken(item),
-					matcher: match,
-				}
-
-				s.rw.Lock()
-				s.nodes[string(item)] = nodeItem
-				s.rw.Unlock()
-			}
-
-			if i+1 >= pLen {
-				s.rw.Lock()
-				nodeItem.subs = append(nodeItem.subs, subscriber)
-				s.rw.Unlock()
-				return nil
-			}
-
-			return nodeItem.next.add(patterns[i+1:], subscriber)
-		}
-
-		if bytes.Contains(item, startBracketSlice) && bytes.Contains(item, endBracketSlice) {
-			word, regex, before := yankRegExp(item)
-
-			wordLen := len(word)
-			matchex := regexp.MustCompile(string(regex))
-
-			if before {
-				match = func(d []byte) bool {
-					if wordLen != 0 && !bytes.HasPrefix(d, word) {
-						return false
-					}
-
-					if wordLen != 0 {
-						d = d[wordLen:]
-					}
-
-					if !matchex.Match(d) {
-						return false
-					}
-
-					return true
-				}
-			} else {
-				match = func(d []byte) bool {
-					if wordLen != 0 && !bytes.HasSuffix(d, word) {
-						return false
-					}
-
-					if wordLen != 0 {
-						d = d[:wordLen]
-					}
-
-					if !matchex.Match(d) {
-						return false
-					}
-
-					return true
-				}
-			}
-
-			s.rw.RLock()
-			nodeItem, ok := s.nodes[string(item)]
-			s.rw.RUnlock()
-			if !ok {
-				nodeItem = &node{
-					next:    newLevel(strictPath, s.tracer),
-					sid:     item,
-					ns:      nsToken(word),
+					ns:      item,
 					matcher: match,
 				}
 
@@ -478,11 +421,7 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 		}
 
 		match = func(d []byte) bool {
-			if bytes.Equal(d, item) {
-				return true
-			}
-
-			return false
+			return bytes.Equal(d, item)
 		}
 
 		s.rw.RLock()
@@ -490,9 +429,9 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 		s.rw.RUnlock()
 		if !ok {
 			nodeItem = &node{
-				next:    newLevel(strictPath, s.tracer),
+				next:    newLevel(s.tracer),
 				sid:     item,
-				ns:      nsToken(item),
+				ns:      item,
 				matcher: match,
 			}
 
@@ -627,23 +566,12 @@ func splitToken(pattern []byte) [][]byte {
 		token = append(token, item)
 	}
 
+	if len(token) != 0 {
+		tokens = append(tokens, token)
+		token = nil
+	}
+
 	return tokens
-}
-
-func recovers(context interface{}, fx func(), tracer Trace) {
-	defer func() {
-		if err := recover(); err != nil {
-			if tracer != nil {
-				size := 1 << 16
-				trace := make([]byte, size)
-				trace = trace[:runtime.Stack(trace, true)]
-				tracer.Trace(context, trace)
-			}
-			return
-		}
-	}()
-
-	fx()
 }
 
 func splitResolveToken(pattern []byte) ([][]byte, error) {
@@ -665,31 +593,54 @@ func splitResolveToken(pattern []byte) ([][]byte, error) {
 		default:
 			token = append(token, item)
 		}
+	}
 
+	if len(token) != 0 {
+		tokens = append(tokens, token)
+		token = nil
 	}
 
 	return tokens, nil
 }
 
+func recovers(context interface{}, fx func(), tracer Trace) {
+	defer func() {
+		if err := recover(); err != nil {
+			if tracer != nil {
+				size := 1 << 16
+				trace := make([]byte, size)
+				trace = trace[:runtime.Stack(trace, true)]
+				if tracer != nil {
+					tracer.Trace(context, trace)
+				}
+			}
+			return
+		}
+	}()
+
+	fx()
+}
+
 // yankRegExp splits the giving pattern `id[\d+]`.
-func yankRegExp(pattern []byte) ([]byte, []byte, bool) {
+func yankRegExp(pattern []byte) ([]byte, []byte) {
 	var word, rgu []byte
 
 	var foundReg bool
-	var before bool
+
+	pattern = bytes.Replace(pattern, endCurlyBracketSlice, emptySlice, 1)
+	pattern = bytes.Replace(pattern, startCurlyBracketSlice, emptySlice, 1)
 
 	for _, item := range pattern {
-		if item == startBracket {
-			if len(word) != 0 {
-				before = true
-			}
+		if item == colon {
+			continue
+		}
 
+		if item == startBracket {
 			foundReg = true
 			continue
 		}
 
 		if item == endBracket {
-			foundReg = false
 			continue
 		}
 
@@ -701,5 +652,5 @@ func yankRegExp(pattern []byte) ([]byte, []byte, bool) {
 		word = append(word, item)
 	}
 
-	return word, rgu, before
+	return word, rgu
 }
