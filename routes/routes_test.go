@@ -59,6 +59,13 @@ func (b *blackbell) Fire(context interface{}, params map[string]string, payload 
 	b.c.Done()
 }
 
+type rootbell struct{ c *counter }
+
+func (r *rootbell) Fire(context interface{}, params map[string]string, payload interface{}) {
+	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Root bell just rang\n", context, params, payload)
+	r.c.Done()
+}
+
 func TestStrictRoutes(t *testing.T) {
 	alarm := routes.New()
 
@@ -68,13 +75,28 @@ func TestStrictRoutes(t *testing.T) {
 	if !c.Match(1) {
 		fatalFailed(t, "Should have successfully increased counter to 1: %s", c)
 	}
-	logPassed(t, "Should have successfully increaseed counter to 1: %s", c)
+	logPassed(t, "Should have successfully increased counter to 1: %s", c)
 
+	alarm.MustRegister([]byte(`/`), &rootbell{c})
 	alarm.MustRegister([]byte(`alarm.red`), &redbell{c})
 	alarm.MustRegister([]byte(`alarm.ish^.black`), &redblackbell{c})
 	alarm.MustRegister([]byte(`alarm.{color:[^black$]}`), &blackbell{c})
 
-	path := routes.PathToByte("/alarm/red")
+	path := routes.PathToByte("/")
+	alarm.Handle(context, path, "RootaBalls")
+
+	if !c.Match(0) {
+		fatalFailed(t, "Should have successfully reduce counter to 0: %s", c)
+	}
+	logPassed(t, "Should have successfully reduce counter to 0: %s", c)
+
+	c.Add()
+
+	if !c.Match(1) {
+		fatalFailed(t, "Should have successfully increased counter to 1: %s", c)
+	}
+	logPassed(t, "Should have successfully increased counter to 1: %s", c)
+	path = routes.PathToByte("/alarm/red")
 	alarm.Handle(context, path, "Balls")
 
 	if !c.Match(0) {
@@ -113,7 +135,8 @@ func TestStrictRoutes(t *testing.T) {
 	c.Add()
 	c.Add()
 	c.Add()
-	if !c.Match(3) {
+	c.Add()
+	if !c.Match(4) {
 		fatalFailed(t, "Should have successfully increased counter to 3: %d", c)
 	}
 	logPassed(t, "Should have successfully increase counter to 3: %d", c)

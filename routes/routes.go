@@ -536,9 +536,19 @@ func (s *level) remove(patterns [][]byte, subscriber Subscriber) error {
 func PathToByte(path string) []byte {
 	tokens := []byte(path)
 	tokens = bytes.TrimSpace(tokens)
-	tokens = bytes.TrimPrefix(tokens, slashSlice)
-	tokens = bytes.TrimSuffix(tokens, slashSlice)
-	return bytes.Replace(tokens, slashSlice, sublistSlice, -1)
+
+	if len(tokens) != 1 {
+		tokens = bytes.TrimPrefix(tokens, slashSlice)
+		tokens = bytes.TrimSuffix(tokens, slashSlice)
+	}
+
+	tokens = bytes.Replace(tokens, slashSlice, sublistSlice, -1)
+
+	if len(tokens) == 1 && tokens[0] == sublist {
+		tokens[0] = byte('/')
+	}
+
+	return tokens
 }
 
 func nsToken(token []byte) []byte {
