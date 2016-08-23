@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -42,6 +43,12 @@ func NewBaseProvider(conn *Connection) *BaseProvider {
 // Close ends the loop cycle for the baseProvider.
 func (bp *BaseProvider) Close(context interface{}) error {
 	bp.Lock.Lock()
+
+	if bp.Connection == nil {
+		bp.Lock.Unlock()
+		return errors.New("Already closed")
+	}
+
 	bp.running = false
 	bp.Lock.Unlock()
 
@@ -66,7 +73,7 @@ func (bp *BaseProvider) IsRunning() bool {
 }
 
 // Fire sends the provided payload into the provided write stream.
-func (bp *BaseProvider) Fire(context interface{}, params map[string]interface{}, payload interface{}) error {
+func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payload interface{}) error {
 	var bu bytes.Buffer
 
 	switch payload.(type) {

@@ -40,30 +40,34 @@ func (c *counter) Match(bit int) bool {
 
 type redbell struct{ c *counter }
 
-func (r *redbell) Fire(context interface{}, params map[string]string, payload interface{}) {
+func (r *redbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
 	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Red bell just rang\n", context, params, payload)
 	r.c.Done()
+	return nil
 }
 
 type redblackbell struct{ c *counter }
 
-func (r *redblackbell) Fire(context interface{}, params map[string]string, payload interface{}) {
+func (r *redblackbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
 	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : RedBlack bell just rang\n", context, params, payload)
 	r.c.Done()
+	return nil
 }
 
 type blackbell struct{ c *counter }
 
-func (b *blackbell) Fire(context interface{}, params map[string]string, payload interface{}) {
+func (b *blackbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
 	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Black bell just rang\n", context, params, payload)
 	b.c.Done()
+	return nil
 }
 
 type rootbell struct{ c *counter }
 
-func (r *rootbell) Fire(context interface{}, params map[string]string, payload interface{}) {
+func (r *rootbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
 	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Root bell just rang\n", context, params, payload)
 	r.c.Done()
+	return nil
 }
 
 func TestStrictRoutes(t *testing.T) {

@@ -42,7 +42,7 @@ type Trace interface {
 
 // Subscriber defines an interface for routes to be fired upon when matched.
 type Subscriber interface {
-	Fire(context interface{}, params map[string]string, payload interface{})
+	Fire(context interface{}, params map[string]string, payload interface{}) error
 }
 
 // Subscription defines a struct for storing subscriptions.
@@ -168,7 +168,11 @@ func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, param
 
 	for _, sub := range n.subs {
 		recovers(context, func() {
-			sub.Fire(context, params, payload)
+			if err := sub.Fire(context, params, payload); err != nil {
+				if tracer != nil {
+					tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", n.sid, err.Error())))
+				}
+			}
 		}, tracer)
 	}
 
@@ -196,16 +200,16 @@ func (s *level) Size() int {
 func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}) {
 	pLen := len(pattern)
 
-	if pLen == 0 {
-		if s.tracer != nil {
-			err := errors.New("Invalid Path to route")
-			s.tracer.Trace(context, []byte(fmt.Sprintf("Error routing %+s: %+s", pattern, err.Error())))
-		}
-	}
-
 	s.rw.RLock()
 	tracer := s.tracer
 	s.rw.RUnlock()
+
+	if pLen == 0 {
+		if s.tracer != nil {
+			err := errors.New("Invalid Path to route")
+			tracer.Trace(context, []byte(fmt.Sprintf("Error routing %+s: %+s", pattern, err.Error())))
+		}
+	}
 
 	params := make(map[string]string)
 
@@ -214,7 +218,11 @@ func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}
 		{
 			for _, sub := range s.all.subs {
 				recovers(context, func() {
-					sub.Fire(context, params, payload)
+					if err := sub.Fire(context, params, payload); err != nil {
+						if tracer != nil {
+							tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", pattern, err.Error())))
+						}
+					}
 				}, tracer)
 			}
 		}
@@ -242,7 +250,11 @@ func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]
 	{
 		for _, sub := range s.all.subs {
 			recovers(context, func() {
-				sub.Fire(context, params, payload)
+				if err := sub.Fire(context, params, payload); err != nil {
+					if tracer != nil {
+						tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", tokens, err.Error())))
+					}
+				}
 			}, tracer)
 		}
 	}

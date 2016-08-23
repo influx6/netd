@@ -6,7 +6,9 @@ import (
 )
 
 var (
+	ctrl              = `\r\n`
 	emptyString       = []byte("")
+	ctrlLine          = []byte(ctrl)
 	newLine           = []byte("\n")
 	newCl             = []byte("\r")
 	colon             = byte(':')
