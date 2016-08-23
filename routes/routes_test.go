@@ -38,12 +38,6 @@ func (c *counter) Match(bit int) bool {
 	return int(atomic.LoadInt64(&c.c)) == bit
 }
 
-type tracer struct{}
-
-func (t tracer) Trace(context interface{}, msg []byte) {
-	fmt.Printf("Trace: %+s\n\n", msg)
-}
-
 type redbell struct{ c *counter }
 
 func (r *redbell) Fire(context interface{}, params map[string]string, payload interface{}) {
@@ -66,8 +60,7 @@ func (b *blackbell) Fire(context interface{}, params map[string]string, payload 
 }
 
 func TestStrictRoutes(t *testing.T) {
-	var tr tracer
-	alarm := routes.New(&tr)
+	alarm := routes.New()
 
 	c := &counter{}
 	c.Add()
@@ -82,10 +75,7 @@ func TestStrictRoutes(t *testing.T) {
 	alarm.MustRegister([]byte(`alarm.{color:[^black$]}`), &blackbell{c})
 
 	path := routes.PathToByte("/alarm/red")
-	if err := alarm.Handle(context, path, "Balls"); err != nil {
-		fatalFailed(t, "Should have successfully matched path %+s: %s", path, err)
-	}
-	logPassed(t, "Should have successfully matched path %+s", path)
+	alarm.Handle(context, path, "Balls")
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %s", c)
@@ -99,10 +89,7 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully increaseed counter to 1: %s", c)
 
 	path = routes.PathToByte("/alarm/redish/black")
-	if err := alarm.Handle(context, path, "Balls"); err != nil {
-		fatalFailed(t, "Should have successfully matched path %+s: %s", path, err)
-	}
-	logPassed(t, "Should have successfully matched path %+s", path)
+	alarm.Handle(context, path, "Balls")
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %s", c)
@@ -116,16 +103,28 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully increase counter to 1: %d", c)
 
 	path = routes.PathToByte("/alarm/black")
-	if err := alarm.Handle(context, path, "Balls"); err != nil {
-		fatalFailed(t, "Should have successfully matched path %+s: %s", path, err)
-	}
-	logPassed(t, "Should have successfully matched path %+s", path)
+	alarm.Handle(context, path, "Balls")
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %d", c)
 	}
 	logPassed(t, "Should have successfully reduce counter to 0: %d", c)
 
+	c.Add()
+	c.Add()
+	c.Add()
+	if !c.Match(3) {
+		fatalFailed(t, "Should have successfully increased counter to 3: %d", c)
+	}
+	logPassed(t, "Should have successfully increase counter to 3: %d", c)
+
+	path = routes.PathToByte("*")
+	alarm.Handle(context, path, "Balls")
+
+	if !c.Match(0) {
+		fatalFailed(t, "Should have successfully reduce counter to 0: %d", c)
+	}
+	logPassed(t, "Should have successfully reduce counter to 0: %d", c)
 }
 
 func logPassed(t *testing.T, msg string, data ...interface{}) {

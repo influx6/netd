@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"runtime"
 	"sync"
-	"sync/atomic"
 )
 
 var (
@@ -23,6 +22,7 @@ var (
 	edgesSlice             = []byte{edges}
 	contains               = byte('*')
 	containsSlice          = []byte{contains}
+	containsArraySlice     = [][]byte{containsSlice}
 	startBracket           = byte('[')
 	startBracketSlice      = []byte{startBracket}
 	endBracket             = byte(']')
@@ -69,22 +69,14 @@ func New(t ...Trace) *Subscription {
 
 // Handle calls the giving path slice, if found and applies the payload else
 // returns an error.
-func (s *Subscription) Handle(context interface{}, path []byte, payload interface{}) error {
-	return s.root.Resolve(context, path, payload)
+func (s *Subscription) Handle(context interface{}, path []byte, payload interface{}) {
+	s.root.Resolve(context, path, payload)
 }
 
 // Handle calls the giving path, if found and applies the payload else
 // returns an error.
-func (s *Subscription) HandlePath(context interface{}, path string, payload interface{}) error {
-	return s.root.Resolve(context, PathToByte(path), payload)
-}
-
-// MustHandle calls the given path slice, if found and applies the payload else
-// panics.
-func (s *Subscription) MustHandle(context interface{}, path []byte, payload interface{}) {
-	if err := s.root.Resolve(context, path, payload); err != nil {
-		panic(err)
-	}
+func (s *Subscription) HandlePath(context interface{}, path string, payload interface{}) {
+	s.root.Resolve(context, PathToByte(path), payload)
 }
 
 // Register adds the new giving path slice into the subscription for routing.
@@ -166,11 +158,13 @@ func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, param
 		tokens = tokens[1:]
 	}
 
-	if !n.matcher(token) {
+	if !n.matcher(token) && !bytes.Equal(token, containsSlice) {
 		return errors.New("token does not match route")
 	}
 
-	params[string(n.ns)] = string(token)
+	if !bytes.Equal(token, containsSlice) {
+		params[string(n.ns)] = string(token)
+	}
 
 	for _, sub := range n.subs {
 		recovers(context, func() {
@@ -178,8 +172,13 @@ func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, param
 		}, tracer)
 	}
 
-	if n.next != nil && len(tokens) != 0 {
-		return n.next.resolve(context, tokens, params, payload)
+	if n.next != nil {
+		if bytes.Equal(token, containsSlice) && len(tokens) == 0 {
+			n.next.resolve(context, containsArraySlice, params, payload)
+			return nil
+		}
+
+		n.next.resolve(context, tokens, params, payload)
 	}
 
 	return nil
@@ -194,11 +193,14 @@ func (s *level) Size() int {
 }
 
 // Resolve checks if the giving path is a match within the giving level's routes.
-func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}) error {
+func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}) {
 	pLen := len(pattern)
 
 	if pLen == 0 {
-		return errors.New("Invalid Path to route")
+		if s.tracer != nil {
+			err := errors.New("Invalid Path to route")
+			s.tracer.Trace(context, []byte(fmt.Sprintf("Error routing %+s: %+s", pattern, err.Error())))
+		}
 	}
 
 	s.rw.RLock()
@@ -217,19 +219,21 @@ func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}
 			}
 		}
 		s.rw.RUnlock()
-
-		return nil
 	}
 
 	tokens, err := splitResolveToken(pattern)
 	if err != nil {
-		return err
+		if s.tracer != nil {
+			s.tracer.Trace(context, []byte(fmt.Sprintf("Error routing %+s: %+s", pattern, err.Error())))
+		}
+
+		return
 	}
 
-	return s.resolve(context, tokens, params, payload)
+	s.resolve(context, tokens, params, payload)
 }
 
-func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]string, payload interface{}) error {
+func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]string, payload interface{}) {
 	s.rw.RLock()
 	tracer := s.tracer
 	s.rw.RUnlock()
@@ -244,23 +248,16 @@ func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]
 	}
 	s.rw.RUnlock()
 
-	var counter int64
-
 	s.rw.RLock()
 	{
 		for _, node := range s.nodes {
-			if err := node.resolve(context, tracer, tokens, params, payload); err != nil {
-				atomic.AddInt64(&counter, 1)
+			if err := node.resolve(context, tracer, tokens, params, payload); err != nil && tracer != nil {
+				tracer.Trace(context, []byte(fmt.Sprintf("Error routing %+s: %+s", tokens, err.Error())))
 			}
 		}
 	}
 	s.rw.RUnlock()
 
-	if atomic.LoadInt64(&counter) == int64(s.Size()) {
-		return errors.New("No route matches path")
-	}
-
-	return nil
 }
 
 // Add adds a new subscriber into the subscription list with the provided pattern.
@@ -584,7 +581,7 @@ func splitResolveToken(pattern []byte) ([][]byte, error) {
 		item := pattern[i]
 
 		switch item {
-		case colon, edges, contains, startBracket, endBracket:
+		case colon, edges, startCurlyBracket, endCurlyBracket, startBracket, endBracket:
 			return nil, errors.New("Resolve Path cant contain pattern characters(`^`,`>`,`*`,`[`,`]`,`[]`")
 		case sublist:
 			tokens = append(tokens, token)
