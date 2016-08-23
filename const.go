@@ -68,4 +68,5 @@ var (
 	emptyString = []byte("")
 	endTrace    = []byte("End Trace")
 	ctrlLine    = []byte(CRTLLine)
+	newLine     = []byte("\n")
 )

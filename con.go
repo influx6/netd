@@ -3,6 +3,8 @@ package netd
 import (
 	"net"
 	"sync"
+
+	"github.com/influx6/netd/routes"
 )
 
 // Broadcast defines an interface for sending messages to two classes of

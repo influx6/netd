@@ -1,5 +1,10 @@
 package engines
 
+import (
+	"github.com/influx6/netd"
+	"github.com/influx6/netd/routes"
+)
+
 // Relays is a type of netd Handler which typically works like a distributed
 // PubSub server, where it allows messages based on matching criterias to be
 // matched against clients listening for specific criteria.
@@ -10,4 +15,17 @@ package engines
 // maybe dying off to shift connections to another hosts while re-spawning
 // themselves.
 type Relay struct {
+	*netd.BaseProvider
+	router *routes.Subscription
+	parser parsers.MessageParser
+}
+
+func NewRelay(parser parsers.MessageParser, baseConn *netd.Connection) *Relay {
+	rl := Relay{
+		parser:       parser,
+		BaseProvider: netd.NewBaseProvider(baseConn),
+		router:       routes.New(baseConn.Config.Trace),
+	}
+
+	return &rl
 }

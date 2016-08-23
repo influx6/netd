@@ -77,8 +77,8 @@ func (bp *BaseProvider) Fire(context interface{}, params map[string]interface{},
 		}
 	case bytes.Buffer:
 		bu = payload.(bytes.Buffer)
-	case bytes.Buffer:
-		bu = payload.(*bytes.Buffer)
+	case *bytes.Buffer:
+		bu = *(payload.(*bytes.Buffer))
 	case []byte:
 		bu.Write(payload.([]byte))
 	default:
