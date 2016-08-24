@@ -86,6 +86,13 @@ func TestStrictRoutes(t *testing.T) {
 	alarm.MustRegister([]byte(`alarm.ish^.black`), &redblackbell{c})
 	alarm.MustRegister([]byte(`alarm.{color:[^black$]}`), &blackbell{c})
 
+	subs := alarm.Routes()
+	if len(subs) != 6 {
+		t.Logf("Recieved: %+s\n", subs)
+		fatalFailed(t, "Should have successfully returned 4 items in the route list")
+	}
+	logPassed(t, "Should have successfully returned 4 items in the route list")
+
 	path := routes.PathToByte("/")
 	alarm.Handle(context, path, "RootaBalls")
 

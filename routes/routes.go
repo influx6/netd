@@ -67,6 +67,11 @@ func New(t ...Trace) *Subscription {
 	return &sub
 }
 
+// Routes returns the lists of routes which the subscription holds.
+func (s *Subscription) Routes() [][]byte {
+	return s.root.Routes()
+}
+
 // Handle calls the giving path slice, if found and applies the payload else
 // returns an error.
 func (s *Subscription) Handle(context interface{}, path []byte, payload interface{}) {
@@ -186,6 +191,26 @@ func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, param
 	}
 
 	return nil
+}
+
+// Routes returns the route for this level including its subroute.
+func (s *level) Routes() [][]byte {
+	var subs [][]byte
+
+	s.rw.RLock()
+	{
+		for _, node := range s.nodes {
+			subs = append(subs, node.sid)
+			if node.next != nil {
+				for _, lroute := range node.next.Routes() {
+					subs = append(subs, bytes.Join([][]byte{node.sid, lroute}, sublistSlice))
+				}
+			}
+		}
+	}
+	s.rw.RUnlock()
+
+	return subs
 }
 
 // Size returns the total number of nodes on this level.
@@ -338,6 +363,8 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 				return errors.New("Invalid Token usage, Edges('^') must be used at start or end of section")
 			}
 
+			ditem := item
+
 			if bytes.HasPrefix(item, edgesSlice) {
 				item = item[1:]
 
@@ -363,18 +390,18 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 			}
 
 			s.rw.RLock()
-			nodeItem, ok := s.nodes[string(item)]
+			nodeItem, ok := s.nodes[string(ditem)]
 			s.rw.RUnlock()
 			if !ok {
 				nodeItem = &node{
 					next:    newLevel(s.tracer),
-					sid:     item,
+					sid:     ditem,
 					ns:      item,
 					matcher: match,
 				}
 
 				s.rw.Lock()
-				s.nodes[string(item)] = nodeItem
+				s.nodes[string(ditem)] = nodeItem
 				s.rw.Unlock()
 			}
 
@@ -394,6 +421,7 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 				return nil
 			}
 
+			ditem := item
 			item = bytes.Replace(item, containsSlice, emptySlice, 1)
 			match = func(d []byte) bool {
 				if bytes.Contains(d, item) {
@@ -404,18 +432,18 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 			}
 
 			s.rw.RLock()
-			nodeItem, ok := s.nodes[string(item)]
+			nodeItem, ok := s.nodes[string(ditem)]
 			s.rw.RUnlock()
 			if !ok {
 				nodeItem = &node{
 					next:    newLevel(s.tracer),
-					sid:     item,
+					sid:     ditem,
 					ns:      item,
 					matcher: match,
 				}
 
 				s.rw.Lock()
-				s.nodes[string(item)] = nodeItem
+				s.nodes[string(ditem)] = nodeItem
 				s.rw.Unlock()
 			}
 

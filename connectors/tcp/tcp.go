@@ -1,4 +1,4 @@
-package netd
+package tcp
 
 import (
 	"bytes"
@@ -9,34 +9,44 @@ import (
 	"sync"
 	"time"
 
+	"github.com/influx6/netd"
 	"github.com/pborman/uuid"
+)
+
+var (
+	ctrl = `\r\n`
+
+	emptyString = []byte("")
+	endTrace    = []byte("End Trace")
+	ctrlLine    = []byte(ctrl)
+	newLine     = []byte("\n")
 )
 
 // TCPConn defines a baselevel connection wrapper which provides a flexibile
 // tcp request management routine.
 type TCPConn struct {
-	Stat
+	netd.Stat
 
 	mc             sync.Mutex
-	sid            string
-	config         Config
-	clientEvents   *BaseEvents
-	clusterEvents  *BaseEvents
-	infoTCP        BaseInfo
-	infoCluster    BaseInfo
-	tcpClient      net.Listener
-	tcpCluster     net.Listener
-	clients        []Provider
-	clusters       []Provider
 	runningClient  bool
 	runningCluster bool
+	sid            string
+	config         netd.Config
+	clientEvents   netd.ConnectionEvents
+	clusterEvents  netd.ConnectionEvents
+	infoTCP        netd.BaseInfo
+	infoCluster    netd.BaseInfo
+	tcpClient      net.Listener
+	tcpCluster     net.Listener
+	clients        []netd.Provider
+	clusters       []netd.Provider
 	closer         chan struct{}
 	conWG          sync.WaitGroup // waitgroup for incoming connections.
 	opWG           sync.WaitGroup // waitgroup for internal servers (client and cluster)
 }
 
 // TCP returns a new instance of connection provider.
-func TCP(c Config) *TCPConn {
+func TCP(c netd.Config) *TCPConn {
 	c.InitLogAndTrace()
 
 	if err := c.ParseTLS(); err != nil {
@@ -46,17 +56,17 @@ func TCP(c Config) *TCPConn {
 
 	sid := uuid.New()
 
-	var info BaseInfo
+	var info netd.BaseInfo
 	info.Addr = c.Addr
 	info.Port = c.Port
-	info.Version = VERSION
+	info.Version = netd.VERSION
 	info.GoVersion = runtime.Version()
 	info.ServerID = sid
 
-	var cinfo BaseInfo
+	var cinfo netd.BaseInfo
 	cinfo.Addr = c.ClustersAddr
 	cinfo.Port = c.ClustersPort
-	cinfo.Version = VERSION
+	cinfo.Version = netd.VERSION
 	cinfo.GoVersion = runtime.Version()
 	cinfo.ServerID = sid
 
@@ -65,15 +75,15 @@ func TCP(c Config) *TCPConn {
 	cn.config = c
 	cn.infoTCP = info
 	cn.infoCluster = cinfo
-	cn.clientEvents = NewBaseEvent()
-	cn.clusterEvents = NewBaseEvent()
+	cn.clientEvents = netd.NewBaseEvent()
+	cn.clusterEvents = netd.NewBaseEvent()
 
 	return &cn
 }
 
 // Clients returns the list of available client connections.
-func (c *TCPConn) Clients(context interface{}) SearchableInfo {
-	var infoList []BaseInfo
+func (c *TCPConn) Clients(context interface{}) netd.SearchableInfo {
+	var infoList []netd.BaseInfo
 
 	c.mc.Lock()
 	for _, client := range c.clients {
@@ -81,12 +91,12 @@ func (c *TCPConn) Clients(context interface{}) SearchableInfo {
 	}
 	c.mc.Unlock()
 
-	return SearchableInfo(infoList)
+	return netd.SearchableInfo(infoList)
 }
 
 // Clusters returns a list of available clusters connections.
-func (c *TCPConn) Clusters(context interface{}) SearchableInfo {
-	var infoList []BaseInfo
+func (c *TCPConn) Clusters(context interface{}) netd.SearchableInfo {
+	var infoList []netd.BaseInfo
 
 	c.mc.Lock()
 	for _, cluster := range c.clusters {
@@ -94,7 +104,7 @@ func (c *TCPConn) Clusters(context interface{}) SearchableInfo {
 	}
 	c.mc.Unlock()
 
-	return SearchableInfo(infoList)
+	return netd.SearchableInfo(infoList)
 }
 
 // SendToClusters sends the provided message to all clusters.
@@ -224,7 +234,7 @@ func (c *TCPConn) IsRunning() bool {
 
 // ServeClusters runs to create the listener for listening to cluster based
 // requests for the tcp connection.
-func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
+func (c *TCPConn) ServeClusters(context interface{}, h netd.Handler) error {
 	c.config.Log.Log(context, "tcp.ServeCluster", "Started : Initializing cluster service : Addr[%s] : Port[%d]", c.config.ClustersAddr, c.config.ClustersPort)
 	addr := net.JoinHostPort(c.config.ClustersAddr, strconv.Itoa(c.config.ClustersPort))
 
@@ -247,11 +257,11 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 	ip, port, _ := net.SplitHostPort(c.tcpCluster.Addr().String())
 	iport, _ := strconv.Atoi(port)
 
-	var info BaseInfo
+	var info netd.BaseInfo
 	info.IP = ip
 	info.Port = iport
-	info.Version = VERSION
-	info.MaxPayload = MAX_PAYLOAD_SIZE
+	info.Version = netd.VERSION
+	info.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	info.GoVersion = runtime.Version()
 	info.ServerID = c.sid
 
@@ -265,7 +275,7 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 
 // ServeClients runs to create the listener for listening to client based
 // requests for the tcp connection.
-func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
+func (c *TCPConn) ServeClients(context interface{}, h netd.Handler) error {
 	c.config.Log.Log(context, "tcp.ServeClients", "Started : Initializing client service : Addr[%s] : Port[%d]", c.config.Addr, c.config.Port)
 	addr := net.JoinHostPort(c.config.Addr, strconv.Itoa(c.config.Port))
 
@@ -288,11 +298,11 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	ip, port, _ := net.SplitHostPort(c.tcpClient.Addr().String())
 	iport, _ := strconv.Atoi(port)
 
-	var info BaseInfo
+	var info netd.BaseInfo
 	info.IP = ip
 	info.Port = iport
-	info.Version = VERSION
-	info.MaxPayload = MAX_PAYLOAD_SIZE
+	info.Version = netd.VERSION
+	info.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	info.GoVersion = runtime.Version()
 	info.ServerID = c.sid
 
@@ -304,10 +314,10 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	return nil
 }
 
-func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
+func (c *TCPConn) clusterLoop(context interface{}, h netd.Handler, info netd.BaseInfo) {
 	c.config.Log.Log(context, "tcp.clusterLoop", "Started")
 
-	var stat StatProvider
+	var stat netd.StatProvider
 
 	// Collect needed state and flag variables.
 	c.mc.Lock()
@@ -321,7 +331,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 	defer c.opWG.Done()
 	c.mc.Unlock()
 
-	sleepTime := ACCEPT_MIN_SLEEP
+	sleepTime := netd.ACCEPT_MIN_SLEEP
 
 	{
 		for c.IsRunning() {
@@ -333,36 +343,36 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 					config.Log.Log(context, "tcp.clusterLoop", "Temporary error recieved, sleeping for %dms", sleepTime/time.Millisecond)
 					time.Sleep(sleepTime)
 					sleepTime *= 2
-					if sleepTime > ACCEPT_MAX_SLEEP {
-						sleepTime = ACCEPT_MIN_SLEEP
+					if sleepTime > netd.ACCEPT_MAX_SLEEP {
+						sleepTime = netd.ACCEPT_MIN_SLEEP
 					}
 				}
 
 				continue
 			}
 
-			sleepTime = ACCEPT_MIN_SLEEP
+			sleepTime = netd.ACCEPT_MIN_SLEEP
 			config.Log.Log(context, "tcp.clusterLoop", " New Connection : Addr[%a]", conn.RemoteAddr().String())
 
-			var connection Connection
+			var connection netd.Connection
 
 			addr, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 			iport, _ := strconv.Atoi(port)
 
-			var connInfo BaseInfo
+			var connInfo netd.BaseInfo
 			connInfo.Addr = addr
 			connInfo.Port = iport
 			connInfo.GoVersion = runtime.Version()
-			connInfo.MaxPayload = MAX_PAYLOAD_SIZE
+			connInfo.MaxPayload = netd.MAX_PAYLOAD_SIZE
 			connInfo.ServerID = uuid.New()
-			connInfo.Version = VERSION
+			connInfo.Version = netd.VERSION
 
 			// Check if we are required to be using TLS then try to wrap net.Conn
 			// to tls.Conn.
 			if useTLS {
 
 				tlsConn := tls.Server(conn, config.TLSConfig)
-				ttl := secondsToDuration(TLS_TIMEOUT * float64(time.Second))
+				ttl := secondsToDuration(netd.TLS_TIMEOUT * float64(time.Second))
 
 				var tlsPassed bool
 
@@ -385,7 +395,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 					continue
 				}
 
-				connection = Connection{
+				connection = netd.Connection{
 					Conn:           tlsConn,
 					Config:         config,
 					ServerInfo:     info,
@@ -398,7 +408,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 
 			} else {
 
-				connection = Connection{
+				connection = netd.Connection{
 					Conn:           conn,
 					Config:         config,
 					ServerInfo:     info,
@@ -420,7 +430,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 
 			// Check authentication of provider and certify if we are authorized.
 			if config.Authenticate {
-				providerAuth, ok := provider.(ClientAuth)
+				providerAuth, ok := provider.(netd.ClientAuth)
 				if !ok && c.config.MustAuthenticate {
 					config.Log.Error(context, "tcp.clusterLoop", err, " New Connection : Addr[%a] : Provider does not match ClientAuth interface", conn.RemoteAddr().String())
 					provider.SendMessage(context, []byte("Error: Provider has no authentication. Authentication needed"), true)
@@ -464,10 +474,10 @@ func (c *TCPConn) clusterLoop(context interface{}, h Handler, info BaseInfo) {
 	c.config.Log.Log(context, "tcp.clusterLoop", "Completed")
 }
 
-func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
+func (c *TCPConn) clientLoop(context interface{}, h netd.Handler, info netd.BaseInfo) {
 	c.config.Log.Log(context, "tcp.clientLoop", "Started")
 
-	var stat StatProvider
+	var stat netd.StatProvider
 
 	c.mc.Lock()
 	stat = c.Stat
@@ -480,7 +490,7 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 	defer c.opWG.Done()
 	c.mc.Unlock()
 
-	sleepTime := ACCEPT_MIN_SLEEP
+	sleepTime := netd.ACCEPT_MIN_SLEEP
 
 	{
 		for c.IsRunning() {
@@ -492,36 +502,36 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 					config.Log.Log(context, "clientLoop", "Temporary error recieved, sleeping for %dms", sleepTime/time.Millisecond)
 					time.Sleep(sleepTime)
 					sleepTime *= 2
-					if sleepTime > ACCEPT_MAX_SLEEP {
-						sleepTime = ACCEPT_MIN_SLEEP
+					if sleepTime > netd.ACCEPT_MAX_SLEEP {
+						sleepTime = netd.ACCEPT_MIN_SLEEP
 					}
 				}
 
 				continue
 			}
 
-			sleepTime = ACCEPT_MIN_SLEEP
+			sleepTime = netd.ACCEPT_MIN_SLEEP
 			config.Log.Log(context, "tcp.clientLoop", " New Connection : Addr[%a]", conn.RemoteAddr().String())
 
-			var connection Connection
+			var connection netd.Connection
 
 			addr, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 			iport, _ := strconv.Atoi(port)
 
-			var connInfo BaseInfo
+			var connInfo netd.BaseInfo
 			connInfo.Addr = addr
 			connInfo.Port = iport
 			connInfo.GoVersion = runtime.Version()
-			connInfo.MaxPayload = MAX_PAYLOAD_SIZE
+			connInfo.MaxPayload = netd.MAX_PAYLOAD_SIZE
 			connInfo.ServerID = uuid.New()
-			connInfo.Version = VERSION
+			connInfo.Version = netd.VERSION
 
 			// Check if we are required to be using TLS then try to wrap net.Conn
 			// to tls.Conn.
 			if useTLS {
 
 				tlsConn := tls.Server(conn, config.TLSConfig)
-				ttl := secondsToDuration(TLS_TIMEOUT * float64(time.Second))
+				ttl := secondsToDuration(netd.TLS_TIMEOUT * float64(time.Second))
 
 				var tlsPassed bool
 
@@ -544,7 +554,7 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 					continue
 				}
 
-				connection = Connection{
+				connection = netd.Connection{
 					Conn:           tlsConn,
 					Config:         config,
 					ServerInfo:     info,
@@ -557,7 +567,7 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 
 			} else {
 
-				connection = Connection{
+				connection = netd.Connection{
 					Conn:           conn,
 					Config:         config,
 					ServerInfo:     info,
@@ -579,7 +589,7 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 
 			// Check authentication of provider and certify if we are authorized.
 			if config.Authenticate {
-				providerAuth, ok := provider.(ClientAuth)
+				providerAuth, ok := provider.(netd.ClientAuth)
 				if !ok && c.config.MustAuthenticate {
 					config.Log.Error(context, "tcp.clientLoop", err, " New Connection : Addr[%a] : Provider does not match ClientAuth interface", conn.RemoteAddr().String())
 					provider.SendMessage(context, []byte("Error: Provider has no authentication. Authentication needed"), true)
@@ -620,4 +630,9 @@ func (c *TCPConn) clientLoop(context interface{}, h Handler, info BaseInfo) {
 	}
 
 	c.config.Log.Log(context, "tcp.clusterLoop", "Completed")
+}
+
+func secondsToDuration(seconds float64) time.Duration {
+	ttl := seconds * float64(time.Second)
+	return time.Duration(ttl)
 }

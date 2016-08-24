@@ -3,9 +3,21 @@ package netd
 import (
 	"net"
 	"sync"
-
-	"github.com/influx6/netd/routes"
 )
+
+// Subscriber defines an interface for routes to be fired upon when matched.
+type Subscriber interface {
+	Fire(context interface{}, params map[string]string, payload interface{}) error
+}
+
+// Router defines a interface for a route provider which registers subscriptions
+// for specific paths.
+type Router interface {
+	Routes() [][]byte
+	Register(path []byte, sub Subscriber) error
+	UnRegister(path []byte, sub Subscriber) error
+	Handle(context interface{}, path []byte, payload interface{})
+}
 
 // Broadcast defines an interface for sending messages to two classes of
 // listeners, which are clients and clusters. This allows a flexible system for
@@ -27,12 +39,12 @@ type Conn interface {
 
 // Handler defines a function handler which returns a new Provider from a
 // Connection.
-type Handler func(context interface{}, c *Connection) (Provider, error)
+type Handler func(context interface{}, r Router, c *Connection) (Provider, error)
 
 // Provider defines a interface for a connection handler, which ensures
 // to manage the request-response cycle of a provided net.Conn.
 type Provider interface {
-	routes.Subscriber
+	Subscriber
 	BaseInfo() BaseInfo
 	Close(context interface{}) error
 	SendMessage(context interface{}, msg []byte, flush bool) error
@@ -57,6 +69,8 @@ type Connection struct {
 type ConnectionEvents interface {
 	OnConnect(fn func(Provider))
 	OnDisconnect(fn func(Provider))
+	FireConnect(Provider)
+	FireDisconnect(Provider)
 }
 
 // NewBaseEvent returns a new instance of a base event.

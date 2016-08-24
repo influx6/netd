@@ -15,11 +15,10 @@ var Relay relayCtrl
 type relayCtrl struct{}
 
 // Relays defines a global function which
-func (relayCtrl) Relays(context interface{}, c *netd.Connection) (netd.Provider, error) {
+func (relayCtrl) Relays(context interface{}, router netd.Router, c *netd.Connection) (netd.Provider, error) {
 	rl := relay{
 		parser:       parser.BlockParser,
-		BaseProvider: netd.NewBaseProvider(c),
-		router:       routes.New(c.Config.Trace),
+		BaseProvider: netd.NewBaseProvider(router, c),
 	}
 
 	go rl.ReadLoop(context)
