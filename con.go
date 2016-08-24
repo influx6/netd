@@ -43,6 +43,7 @@ type Provider interface {
 // connection.
 type Connection struct {
 	net.Conn
+	Subscriptions  *routes.Subscription
 	Config         Config
 	ServerInfo     BaseInfo
 	ConnectionInfo BaseInfo
