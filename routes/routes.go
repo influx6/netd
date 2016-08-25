@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"runtime"
 	"sync"
+
+	"github.com/influx6/netd"
 )
 
 var (
@@ -40,11 +42,6 @@ type Trace interface {
 
 //==============================================================================
 
-// Subscriber defines an interface for routes to be fired upon when matched.
-type Subscriber interface {
-	Fire(context interface{}, params map[string]string, payload interface{}) error
-}
-
 // Subscription defines a struct for storing subscriptions.
 type Subscription struct {
 	root  *level
@@ -71,7 +68,7 @@ func New(t ...Trace) *Subscription {
 	return &sub
 }
 
-func (s *Subscription) RoutesFor(sub Subscriber) ([][]byte, error) {
+func (s *Subscription) RoutesFor(sub netd.Subscriber) ([][]byte, error) {
 	sb, found := s.cache.Find(sub)
 	if !found {
 		return nil, errors.New("Not found")
@@ -98,7 +95,7 @@ func (s *Subscription) Handle(context interface{}, path []byte, payload interfac
 }
 
 // Register adds the new giving path slice into the subscription for routing.
-func (s *Subscription) Register(path []byte, sub Subscriber) error {
+func (s *Subscription) Register(path []byte, sub netd.Subscriber) error {
 	if err := s.root.Add(path, sub); err != nil {
 		return err
 	}
@@ -108,7 +105,7 @@ func (s *Subscription) Register(path []byte, sub Subscriber) error {
 }
 
 // Unregister removes the existing giving path slice into the subscription for routing.
-func (s *Subscription) Unregister(path []byte, sub Subscriber) error {
+func (s *Subscription) Unregister(path []byte, sub netd.Subscriber) error {
 	if err := s.root.Remove(path, sub); err != nil {
 		return err
 	}
@@ -125,11 +122,11 @@ type subCache struct {
 }
 
 type subyList struct {
-	sub Subscriber
+	sub netd.Subscriber
 	ns  [][]byte
 }
 
-func (s *subCache) Remove(sub Subscriber, path []byte) {
+func (s *subCache) Remove(sub netd.Subscriber, path []byte) {
 	s.rw.RLock()
 	{
 		for _, target := range s.cache {
@@ -149,7 +146,7 @@ func (s *subCache) Remove(sub Subscriber, path []byte) {
 	s.rw.RUnlock()
 }
 
-func (s *subCache) Add(sub Subscriber, path []byte) {
+func (s *subCache) Add(sub netd.Subscriber, path []byte) {
 	var found bool
 	s.rw.RLock()
 	{
@@ -177,7 +174,7 @@ func (s *subCache) Add(sub Subscriber, path []byte) {
 	}
 }
 
-func (s *subCache) Find(sub Subscriber) (subyList, bool) {
+func (s *subCache) Find(sub netd.Subscriber) (subyList, bool) {
 	var target subyList
 
 	s.rw.RLock()
@@ -219,7 +216,7 @@ type node struct {
 	next    *level
 	sid     []byte
 	ns      []byte
-	subs    []Subscriber
+	subs    []netd.Subscriber
 	matcher func([]byte) bool
 }
 
@@ -373,7 +370,7 @@ func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]
 }
 
 // Add adds a new subscriber into the subscription list with the provided pattern.
-func (s *level) Add(pattern []byte, subscriber Subscriber) error {
+func (s *level) Add(pattern []byte, subscriber netd.Subscriber) error {
 	pLen := len(pattern)
 
 	if pLen == 1 && pattern[0] == contains {
@@ -385,7 +382,7 @@ func (s *level) Add(pattern []byte, subscriber Subscriber) error {
 	return s.add(tokens, subscriber)
 }
 
-func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
+func (s *level) add(patterns [][]byte, subscriber netd.Subscriber) error {
 	pLen := len(patterns)
 
 	for i := 0; i < len(patterns); i++ {
@@ -566,7 +563,7 @@ func (s *level) add(patterns [][]byte, subscriber Subscriber) error {
 }
 
 // Remove delets the subscriber from the subscription list with the provided pattern.
-func (s *level) Remove(pattern []byte, subscriber Subscriber) error {
+func (s *level) Remove(pattern []byte, subscriber netd.Subscriber) error {
 	pLen := len(pattern)
 
 	if pLen == 1 && pattern[0] == contains {
@@ -593,14 +590,14 @@ func (s *level) Remove(pattern []byte, subscriber Subscriber) error {
 			}
 		}
 
-		return errors.New("Subscriber not found in registry")
+		return errors.New("netd.Subscriber not found in registry")
 	}
 
 	tokens := splitToken(pattern)
 	return s.remove(tokens, subscriber)
 }
 
-func (s *level) remove(patterns [][]byte, subscriber Subscriber) error {
+func (s *level) remove(patterns [][]byte, subscriber netd.Subscriber) error {
 	pLen := len(patterns)
 
 	for i := 0; i < len(patterns); i++ {
@@ -637,7 +634,7 @@ func (s *level) remove(patterns [][]byte, subscriber Subscriber) error {
 				}
 			}
 
-			return errors.New("Subscriber not found in registry")
+			return errors.New("netd.Subscriber not found in registry")
 		}
 
 		return nodeItem.next.remove(patterns[i+1:], subscriber)

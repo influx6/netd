@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/influx6/netd"
+	"github.com/influx6/netd/routes"
 	"github.com/pborman/uuid"
 )
 
@@ -32,8 +33,6 @@ type TCPConn struct {
 	runningCluster bool
 	sid            string
 	config         netd.Config
-	clientEvents   netd.ConnectionEvents
-	clusterEvents  netd.ConnectionEvents
 	infoTCP        netd.BaseInfo
 	infoCluster    netd.BaseInfo
 	tcpClient      net.Listener
@@ -41,8 +40,11 @@ type TCPConn struct {
 	clients        []netd.Provider
 	clusters       []netd.Provider
 	closer         chan struct{}
+	router         *routes.Subscription
 	conWG          sync.WaitGroup // waitgroup for incoming connections.
 	opWG           sync.WaitGroup // waitgroup for internal servers (client and cluster)
+	clientEvents   netd.ConnectionEvents
+	clusterEvents  netd.ConnectionEvents
 }
 
 // TCP returns a new instance of connection provider.
@@ -397,6 +399,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h netd.Handler, info netd.Bas
 
 				connection = netd.Connection{
 					Conn:           tlsConn,
+					Router:         c.router,
 					Config:         config,
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
@@ -410,6 +413,7 @@ func (c *TCPConn) clusterLoop(context interface{}, h netd.Handler, info netd.Bas
 
 				connection = netd.Connection{
 					Conn:           conn,
+					Router:         c.router,
 					Config:         config,
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
@@ -556,6 +560,7 @@ func (c *TCPConn) clientLoop(context interface{}, h netd.Handler, info netd.Base
 
 				connection = netd.Connection{
 					Conn:           tlsConn,
+					Router:         c.router,
 					Config:         config,
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
@@ -569,6 +574,7 @@ func (c *TCPConn) clientLoop(context interface{}, h netd.Handler, info netd.Base
 
 				connection = netd.Connection{
 					Conn:           conn,
+					Router:         c.router,
 					Config:         config,
 					ServerInfo:     info,
 					ConnectionInfo: connInfo,
