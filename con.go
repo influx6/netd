@@ -16,7 +16,7 @@ type Router interface {
 	Routes() [][]byte
 	RoutesFor(sub Subscriber) ([][]byte, error)
 	Register(path []byte, sub Subscriber) error
-	UnRegister(path []byte, sub Subscriber) error
+	Unregister(path []byte, sub Subscriber) error
 	Handle(context interface{}, path []byte, payload interface{})
 }
 
