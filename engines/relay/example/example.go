@@ -45,9 +45,16 @@ func main() {
 	c.Port = 4050
 	c.Addr = "0.0.0.0"
 
+	c.ClustersPort = 4055
+	c.ClustersAddr = "0.0.0.0"
+
 	tcp := tcp.New(c)
 
-	if err := tcp.ServeClients(context, relay.Handler); err != nil {
+	if err := tcp.ServeClients(context, relay.ClientHandler); err != nil {
+		panic(err)
+	}
+
+	if err := tcp.ServeClusters(context, relay.ClusterHandler); err != nil {
 		panic(err)
 	}
 
