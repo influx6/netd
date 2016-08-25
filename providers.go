@@ -22,15 +22,17 @@ type BaseProvider struct {
 	Lock   sync.Mutex
 	Waiter sync.WaitGroup
 	Writer *bufio.Writer
+	Router Router
 
 	running bool
 	closer  chan struct{}
 }
 
 // NewBaseProvider returns a new instance of a BaseProvider.
-func NewBaseProvider(conn *Connection) *BaseProvider {
+func NewBaseProvider(router Router, conn *Connection) *BaseProvider {
 	var bp BaseProvider
 	bp.Connection = conn
+	bp.Router = router
 
 	bp.Waiter.Add(1)
 	bp.running = true
