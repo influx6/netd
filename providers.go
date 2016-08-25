@@ -44,11 +44,15 @@ func NewBaseProvider(router Router, conn *Connection) *BaseProvider {
 
 // Close ends the loop cycle for the baseProvider.
 func (bp *BaseProvider) Close(context interface{}) error {
+	bp.Config.Log.Log(context, "Close", "Started : Connection[%+s] ", bp.RemoteAddr())
+
 	bp.Lock.Lock()
 
 	if bp.Connection == nil {
 		bp.Lock.Unlock()
-		return errors.New("Already closed")
+		err := errors.New("Already closed")
+		bp.Config.Log.Error(context, "Close", err, "Completed ")
+		return err
 	}
 
 	bp.running = false
@@ -58,8 +62,18 @@ func (bp *BaseProvider) Close(context interface{}) error {
 	close(bp.closer)
 
 	bp.Lock.Lock()
-	bp.Connection = nil
+
+	if err := bp.Connection.Close(); err != nil {
+		bp.Connection.Conn = nil
+		bp.Lock.Unlock()
+		bp.Config.Log.Error(context, "Close", err, "Completed ")
+		return err
+	}
+
+	bp.Connection.Conn = nil
 	bp.Lock.Unlock()
+
+	bp.Config.Log.Log(context, "Close", "Completed ")
 	return nil
 }
 
@@ -76,6 +90,8 @@ func (bp *BaseProvider) IsRunning() bool {
 
 // Fire sends the provided payload into the provided write stream.
 func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payload interface{}) error {
+	bp.Config.Log.Log(context, "Fire", "Started : Connection[%+s] : Paral[%#v] :  Payload[%#v]", bp.RemoteAddr(), params, payload)
+
 	var bu bytes.Buffer
 
 	switch payload.(type) {
@@ -96,14 +112,19 @@ func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payl
 		}
 	}
 
+	bp.Config.Log.Log(context, "Fire", "Completed")
 	return bp.SendMessage(context, bu.Bytes(), true)
 }
 
 // SendMessage sends a message into the provider connection. This exists for
 // the outside which wishes to call a write into the connection.
 func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush bool) error {
+	bp.Config.Log.Log(context, "SendMessage", "Started : Connection[%+s] : Data[%s] :  Flush[%t]", bp.RemoteAddr(), msg, doFlush)
+
 	if len(msg) > MAX_PAYLOAD_SIZE {
-		return fmt.Errorf("Data is above allowed payload size of %d", MAX_PAYLOAD_SIZE)
+		err := fmt.Errorf("Data is above allowed payload size of %d", MAX_PAYLOAD_SIZE)
+		bp.Config.Log.Error(context, "SendMessage", err, "Completed")
+		return err
 	}
 
 	var err error
@@ -125,7 +146,13 @@ func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush boo
 		}
 	}
 
-	return err
+	if err != nil {
+		bp.Config.Log.Error(context, "SendMessage", err, "Completed")
+		return err
+	}
+
+	bp.Config.Log.Log(context, "SendMessage", "Completed")
+	return nil
 }
 
 // BaseInfo returns a BaseInfo struct which contains information on the

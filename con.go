@@ -34,13 +34,13 @@ type Broadcast interface {
 // both clusters and and clients.
 type Conn interface {
 	Broadcast
-	ServeClient(context interface{}, h Handler) error
-	ServeCluster(context interface{}, h Handler) error
+	ServeClients(context interface{}, h Handler) error
+	ServeClusters(context interface{}, h Handler) error
 }
 
 // Handler defines a function handler which returns a new Provider from a
 // Connection.
-type Handler func(context interface{}, r Router, c *Connection) (Provider, error)
+type Handler func(context interface{}, c *Connection) (Provider, error)
 
 // Provider defines a interface for a connection handler, which ensures
 // to manage the request-response cycle of a provided net.Conn.

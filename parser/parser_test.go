@@ -55,7 +55,7 @@ func TestParserBlocks(t *testing.T) {
 }
 
 func TestBadBlock(t *testing.T) {
-	block, err := parser.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\n\r}":`))
+	block, err := parser.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\r\n}":`))
 	if err != nil {
 		logPassed(t, "Should have failed to parse blocks: %+s", err)
 		return
@@ -65,13 +65,22 @@ func TestBadBlock(t *testing.T) {
 }
 
 func TestBadParserBlocks(t *testing.T) {
-	_, err := parser.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\n\r}"}:`))
+	_, err := parser.BlockParser.SplitMultiplex([]byte(`{A|D|"{udss\r\n}"}:`))
 	if err != nil {
 		logPassed(t, "Should have failed to parse blocks: %+s", err)
 		return
 	}
 
 	fatalFailed(t, "Should have failed to parse blocks")
+}
+
+func TestSimpleParserBlocks(t *testing.T) {
+	blocks, err := parser.BlockParser.SplitMultiplex([]byte("{INFO}\r\n"))
+	if err != nil {
+		fatalFailed(t, "Should have parsed blocks: %s", err)
+	}
+
+	logPassed(t, "Should have parsed blocks: %+q", blocks)
 }
 
 func TestComplexParserBlocks(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	ctrl              = `\r\n`
+	ctrl              = "\r\n"
 	emptyString       = []byte("")
 	ctrlLine          = []byte(ctrl)
 	newLine           = []byte("\n")
@@ -57,6 +57,7 @@ func (b blockMessage) Parse(msg []byte) ([]Message, error) {
 		}
 
 		blockParts := b.SplitParts(block)
+
 		var command []byte
 		var data [][]byte
 
@@ -140,6 +141,10 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 	var messageStart bool
 
 	msgLen := len(msg)
+
+	if msg[0] != beginBracket {
+		return nil, errors.New("Expected message block/blocks should be enclosed in '{','}'")
+	}
 
 	{
 	blockLoop:

@@ -4,7 +4,7 @@ import "time"
 
 const (
 	// CRTLine defines the control line value which must end all packets.
-	CRTLLine = `\r\n`
+	CRTLLine = "\r\n"
 
 	// CRTLineLen caches the length of a control line.
 	CRTLLineLen = len(CRTLLine)

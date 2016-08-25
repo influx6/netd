@@ -89,7 +89,7 @@ type Config struct {
 
 // InitLogAndTrace checks and assigns dummy log and trace callers to the config
 // if that was not set to ensure calls get passed through without panics.
-func (c Config) InitLogAndTrace() {
+func (c *Config) InitLogAndTrace() {
 	if c.Log == nil {
 		c.Log = Logger
 	}
@@ -101,7 +101,7 @@ func (c Config) InitLogAndTrace() {
 // MatchClientCredentials matches the provided crendential against the
 // provided static users crendential, this is useful for testing as it
 // allows a predefined set of crendentails to allow.
-func (c Config) MatchClientCredentials(cd Credential) bool {
+func (c *Config) MatchClientCredentials(cd Credential) bool {
 	for _, user := range c.ClientCrendentails {
 		if cd.Username == user.Username && cd.Password == user.Password {
 			return true
@@ -114,7 +114,7 @@ func (c Config) MatchClientCredentials(cd Credential) bool {
 // MatchClusterCredentials matches the provided crendential against the
 // provided static cluster users crendential, this is useful for testing as it
 // allows a predefined set of crendentails to allow.
-func (c Config) MatchClusterCredentials(cd Credential) bool {
+func (c *Config) MatchClusterCredentials(cd Credential) bool {
 	for _, user := range c.ClusterCredentials {
 		if cd.Username == user.Username && cd.Password == user.Password {
 			return true
@@ -126,7 +126,7 @@ func (c Config) MatchClusterCredentials(cd Credential) bool {
 
 // ParseTLS parses the tls configuration variables assigning the value to the
 // TLSConfig if not already assigned to.
-func (c Config) ParseTLS() error {
+func (c *Config) ParseTLS() error {
 	if c.TLSConfig != nil || !c.UseTLS {
 		return nil
 	}
