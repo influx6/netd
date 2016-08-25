@@ -14,6 +14,7 @@ type Subscriber interface {
 // for specific paths.
 type Router interface {
 	Routes() [][]byte
+	RoutesFor(sub Subscriber) ([][]byte, error)
 	Register(path []byte, sub Subscriber) error
 	UnRegister(path []byte, sub Subscriber) error
 	Handle(context interface{}, path []byte, payload interface{})
@@ -55,7 +56,7 @@ type Provider interface {
 // connection.
 type Connection struct {
 	net.Conn
-	Subscriptions  *routes.Subscription
+	Subscriptions  Router
 	Config         Config
 	ServerInfo     BaseInfo
 	ConnectionInfo BaseInfo

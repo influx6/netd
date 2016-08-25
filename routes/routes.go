@@ -47,7 +47,8 @@ type Subscriber interface {
 
 // Subscription defines a struct for storing subscriptions.
 type Subscription struct {
-	root *level
+	root  *level
+	cache *subCache
 }
 
 // New returns a new Subscription which can be used to route to specific
@@ -55,6 +56,9 @@ type Subscription struct {
 // zero value tracers.
 func New(t ...Trace) *Subscription {
 	var sub Subscription
+
+	var cache subCache
+	sub.cache = &cache
 
 	var tr Trace
 
@@ -65,6 +69,21 @@ func New(t ...Trace) *Subscription {
 	sub.root = newLevel(tr)
 
 	return &sub
+}
+
+func (s *Subscription) RoutesFor(sub Subscriber) ([][]byte, error) {
+	sb, found := s.cache.Find(sub)
+	if !found {
+		return nil, errors.New("Not found")
+	}
+
+	var ju [][]byte
+
+	for _, ns := range sb.ns {
+		ju = append(ju, ns)
+	}
+
+	return ju, nil
 }
 
 // Routes returns the lists of routes which the subscription holds.
@@ -78,46 +97,102 @@ func (s *Subscription) Handle(context interface{}, path []byte, payload interfac
 	s.root.Resolve(context, path, payload)
 }
 
-// Handle calls the giving path, if found and applies the payload else
-// returns an error.
-func (s *Subscription) HandlePath(context interface{}, path string, payload interface{}) {
-	s.root.Resolve(context, PathToByte(path), payload)
-}
-
 // Register adds the new giving path slice into the subscription for routing.
 func (s *Subscription) Register(path []byte, sub Subscriber) error {
-	return s.root.Add(path, sub)
-}
-
-// MustRegister adds the new giving path slice into the subscription for routing
-// else panics.
-func (s *Subscription) MustRegister(path []byte, sub Subscriber) {
 	if err := s.root.Add(path, sub); err != nil {
-		panic(err)
+		return err
 	}
-}
 
-// RegisterPath adds the new giving path into the subscription for routing.
-func (s *Subscription) RegisterPath(path string, sub Subscriber) error {
-	return s.root.Add([]byte(path), sub)
+	s.cache.Add(sub, path)
+	return nil
 }
 
 // Unregister removes the existing giving path slice into the subscription for routing.
 func (s *Subscription) Unregister(path []byte, sub Subscriber) error {
-	return s.root.Remove(path, sub)
-}
-
-// UnregisterPath removes the existing giving path into the subscription for routing.
-func (s *Subscription) UnregisterPath(path string, sub Subscriber) error {
-	return s.root.Remove([]byte(path), sub)
-}
-
-// MustUnregister removes the existing giving path slice into the subscription for routing
-// else panics.
-func (s *Subscription) MustUnregister(path []byte, sub Subscriber) {
 	if err := s.root.Remove(path, sub); err != nil {
-		panic(err)
+		return err
 	}
+
+	s.cache.Remove(sub, path)
+	return nil
+}
+
+//==============================================================================
+
+type subCache struct {
+	rw    sync.RWMutex
+	cache []subyList
+}
+
+type subyList struct {
+	sub Subscriber
+	ns  [][]byte
+}
+
+func (s *subCache) Remove(sub Subscriber, path []byte) {
+	s.rw.RLock()
+	{
+		for _, target := range s.cache {
+			if target.sub != sub {
+				continue
+			}
+
+			for n, pn := range target.ns {
+				if bytes.Equal(path, pn) {
+					target.ns = append(target.ns[:n], target.ns[n+1:]...)
+				}
+			}
+
+			break
+		}
+	}
+	s.rw.RUnlock()
+}
+
+func (s *subCache) Add(sub Subscriber, path []byte) {
+	var found bool
+	s.rw.RLock()
+	{
+		for _, target := range s.cache {
+			if target.sub != sub {
+				continue
+			}
+
+			target.ns = append(target.ns, path)
+			found = true
+			break
+		}
+	}
+	s.rw.RUnlock()
+
+	if !found {
+		s.rw.Lock()
+		{
+			s.cache = append(s.cache, subyList{
+				sub: sub,
+				ns:  [][]byte{path},
+			})
+		}
+		s.rw.Unlock()
+	}
+}
+
+func (s *subCache) Find(sub Subscriber) (subyList, bool) {
+	var target subyList
+
+	s.rw.RLock()
+	{
+		for _, target = range s.cache {
+			if target.sub != sub {
+				continue
+			}
+
+			return target, true
+		}
+	}
+	s.rw.RUnlock()
+
+	return target, false
 }
 
 //==============================================================================
