@@ -168,6 +168,7 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully reduce counter to 0: %d", c)
 
 	must(alarm.Unregister([]byte(`/`), rootSub))
+
 }
 
 func logPassed(t *testing.T, msg string, data ...interface{}) {
