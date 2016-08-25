@@ -87,7 +87,8 @@ func TestStrictRoutes(t *testing.T) {
 	}
 	logPassed(t, "Should have successfully increased counter to 1: %s", c)
 
-	must(alarm.Register([]byte(`/`), &rootbell{c}))
+	rootSub := &rootbell{c}
+	must(alarm.Register([]byte(`/`), rootSub))
 	must(alarm.Register([]byte(`alarm.red`), &redbell{c}))
 	must(alarm.Register([]byte(`alarm.ish^.black`), &redblackbell{c}))
 	must(alarm.Register([]byte(`alarm.{color:[^black$]}`), &blackbell{c}))
@@ -165,6 +166,8 @@ func TestStrictRoutes(t *testing.T) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %d", c)
 	}
 	logPassed(t, "Should have successfully reduce counter to 0: %d", c)
+
+	must(alarm.Unregister([]byte(`/`), rootSub))
 }
 
 func logPassed(t *testing.T, msg string, data ...interface{}) {
