@@ -1,9 +1,6 @@
 package netd
 
-import (
-	"net"
-	"sync"
-)
+import "sync"
 
 // Subscriber defines an interface for routes to be fired upon when matched.
 type Subscriber interface {
@@ -20,27 +17,16 @@ type Router interface {
 	Handle(context interface{}, path []byte, payload interface{})
 }
 
-// Broadcast defines an interface for sending messages to two classes of
+// Connections defines an interface for sending messages to two classes of
 // listeners, which are clients and clusters. This allows a flexible system for
 // expanding more details from a central controller or within a decentral
 // controller.
-type Broadcast interface {
+type Connections interface {
+	Clients(context interface{}) SearchableInfo
+	Clusters(context interface{}) SearchableInfo
 	SendToClients(context interface{}, msg []byte, flush bool) error
 	SendToClusters(context interface{}, msg []byte, flush bool) error
 }
-
-// Conn defines an interface which manages the connection creation and accept
-// lifecycle and using the provided ConnHandler produces connections for
-// both clusters and and clients.
-type Conn interface {
-	Broadcast
-	ServeClients(context interface{}, h Handler) error
-	ServeClusters(context interface{}, h Handler) error
-}
-
-// Handler defines a function handler which returns a new Provider from a
-// Connection.
-type Handler func(context interface{}, c *Connection) (Provider, error)
 
 // Provider defines a interface for a connection handler, which ensures
 // to manage the request-response cycle of a provided net.Conn.
@@ -50,20 +36,6 @@ type Provider interface {
 	Close(context interface{}) error
 	SendMessage(context interface{}, msg []byte, flush bool) error
 	CloseNotify() chan struct{}
-}
-
-// Connection defines a struct which stores the incoming request for a
-// connection.
-type Connection struct {
-	net.Conn
-	Router         Router
-	Config         Config
-	ServerInfo     BaseInfo
-	ConnectionInfo BaseInfo
-	Connections    Connections
-	Events         ConnectionEvents
-	BroadCaster    Broadcast
-	Stat           StatProvider
 }
 
 // ConnectionEvents defines a interface which defines a connection event
@@ -118,12 +90,6 @@ func (c *BaseEvents) FireConnect(p Provider) {
 		cnFN(p)
 	}
 	c.mc.RUnlock()
-}
-
-// Connections provides a interfae which lists connected clients and clusters.
-type Connections interface {
-	Clients(context interface{}) SearchableInfo
-	Clusters(context interface{}) SearchableInfo
 }
 
 // SearchableInfo defines a BaseInfo slice which allows querying specific data
