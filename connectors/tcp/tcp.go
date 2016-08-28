@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	ctrl = `\r\n`
+	ctrl = "\r\n"
 
+	allSubs     = []byte("*")
 	emptyString = []byte("")
 	endTrace    = []byte("End Trace")
 	ctrlLine    = []byte(ctrl)
@@ -28,7 +29,8 @@ var (
 // provided net.Conn for usage.
 type Connections interface {
 	netd.Connections
-	NewConn(context interface{}, c net.Conn) error
+	NewCluster(context interface{}, c net.Conn) error
+	NewClusterFromAddr(context interface{}, addr string, port int) error
 }
 
 // Connection defines a struct which stores the incoming request for a
@@ -62,6 +64,10 @@ type TCPConn struct {
 
 	clientHandler  Handler
 	clusterHandler Handler
+	router         netd.Router
+
+	clientAddr  string
+	clusterAddr string
 
 	closer        chan struct{}
 	config        netd.Config
@@ -73,7 +79,6 @@ type TCPConn struct {
 	opWG          sync.WaitGroup
 	clients       []netd.Provider
 	clusters      []netd.Provider
-	router        *routes.Subscription
 	clientEvents  netd.ConnectionEvents
 	clusterEvents netd.ConnectionEvents
 }
@@ -108,6 +113,7 @@ func New(c netd.Config) *TCPConn {
 	cn.config = c
 	cn.infoTCP = info
 	cn.infoCluster = cinfo
+	cn.router = routes.New(c.Trace)
 	cn.clientEvents = netd.NewBaseEvent()
 	cn.clusterEvents = netd.NewBaseEvent()
 
@@ -304,7 +310,10 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 		return err
 	}
 
-	ip, port, _ := net.SplitHostPort(c.tcpCluster.Addr().String())
+	caddr := c.tcpCluster.Addr().String()
+	c.clusterAddr = caddr
+
+	ip, port, _ := net.SplitHostPort(caddr)
 	iport, _ := strconv.Atoi(port)
 
 	var info netd.BaseInfo
@@ -348,7 +357,10 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 		return err
 	}
 
-	ip, port, _ := net.SplitHostPort(c.tcpClient.Addr().String())
+	caddr := c.tcpClient.Addr().String()
+	c.clientAddr = caddr
+
+	ip, port, _ := net.SplitHostPort(caddr)
 	iport, _ := strconv.Atoi(port)
 
 	var info netd.BaseInfo
@@ -369,7 +381,48 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	return nil
 }
 
-func (c *TCPConn) NewConn(context interface{}, conn net.Conn) error {
+func (c *TCPConn) NewClusterFromAddr(context interface{}, addr string, port int) error {
+	c.config.Log.Log(context, "tcp.NewConnFrom", "Started : Creating net.Conn   [%s: %d]", addr, port)
+
+	c.mc.Lock()
+	if !c.runningCluster {
+		c.mc.Unlock()
+		err := errors.New("No clustering currently")
+		c.config.Log.Error(context, "tcp.NewConnFrom", err, "Completed")
+		return err
+	}
+
+	c.mc.Unlock()
+
+	var clustAddr string
+
+	c.mc.Lock()
+	{
+		clustAddr = c.clusterAddr
+	}
+	c.mc.Unlock()
+
+	ip, sport, _ := net.SplitHostPort(clustAddr)
+	iport, _ := strconv.Atoi(sport)
+
+	if addr == ip && port == iport {
+		err := errors.New("Incapable of connecting to self")
+		c.config.Log.Error(context, "tcp.NewConnFrom", err, "Completed")
+		return err
+	}
+
+	caddr := net.JoinHostPort(addr, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", caddr, netd.DEFAULT_DIAL_TIMEOUT)
+	if err != nil {
+		c.config.Log.Error(context, "tcp.NewConnFrom", err, "Completed")
+		return err
+	}
+
+	c.config.Log.Log(context, "tcp.NewConnFrom", "Completed")
+	return c.NewCluster(context, conn)
+}
+
+func (c *TCPConn) NewCluster(context interface{}, conn net.Conn) error {
 	c.config.Log.Log(context, "tcp.NewConn", "Started : For[%s]", conn.RemoteAddr().String())
 
 	ip, port, _ := net.SplitHostPort(c.tcpClient.Addr().String())
@@ -503,12 +556,14 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		<-provider.CloseNotify()
 		config.Log.Log(context, "tcp.newClusterConn", "Provider with Addr[%+s] ending connection ", raddr)
 		c.conWG.Done()
+		c.router.Unregister(allSubs, provider)
 		c.clusterEvents.FireDisconnect(provider)
 	}()
 
 	c.mc.Lock()
 	{
 		c.conWG.Add(1)
+		c.router.Register(allSubs, provider)
 		c.clusters = append(c.clusters, provider)
 	}
 	c.mc.Unlock()

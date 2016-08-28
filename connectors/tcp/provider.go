@@ -25,6 +25,7 @@ type BaseProvider struct {
 	Waiter sync.WaitGroup
 	Writer *bufio.Writer
 	Router netd.Router
+	Addr   string
 
 	running bool
 	closer  chan struct{}
@@ -36,6 +37,7 @@ func NewBaseProvider(router netd.Router, conn *Connection) *BaseProvider {
 	bp.Connection = conn
 	bp.Router = router
 
+	bp.Addr = conn.RemoteAddr().String()
 	bp.Waiter.Add(1)
 	bp.running = true
 	bp.closer = make(chan struct{}, 0)
@@ -46,11 +48,11 @@ func NewBaseProvider(router netd.Router, conn *Connection) *BaseProvider {
 
 // Close ends the loop cycle for the baseProvider.
 func (bp *BaseProvider) Close(context interface{}) error {
-	bp.Config.Log.Log(context, "Close", "Started : Connection[%+s] ", bp.RemoteAddr())
+	bp.Config.Log.Log(context, "Close", "Started : Connection[%+s] ", bp.Addr)
 
 	bp.Lock.Lock()
 
-	if bp.Connection == nil {
+	if bp.Connection == nil || bp.Connection.Conn == nil {
 		bp.Lock.Unlock()
 		err := errors.New("Already closed")
 		bp.Config.Log.Error(context, "Close", err, "Completed ")
@@ -92,7 +94,7 @@ func (bp *BaseProvider) IsRunning() bool {
 
 // Fire sends the provided payload into the provided write stream.
 func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payload interface{}) error {
-	bp.Config.Log.Log(context, "Fire", "Started : Connection[%+s] : Paral[%#v] :  Payload[%#v]", bp.RemoteAddr(), params, payload)
+	bp.Config.Log.Log(context, "Fire", "Started : Connection[%+s] : Paral[%#v] :  Payload[%#v]", bp.Addr, params, payload)
 
 	var bu bytes.Buffer
 
@@ -121,12 +123,16 @@ func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payl
 // SendMessage sends a message into the provider connection. This exists for
 // the outside which wishes to call a write into the connection.
 func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush bool) error {
-	bp.Config.Log.Log(context, "SendMessage", "Started : Connection[%+s] : Data[%s] :  Flush[%t]", bp.RemoteAddr(), msg, doFlush)
+	bp.Config.Log.Log(context, "SendMessage", "Started : Connection[%+s] : Data[%s] :  Flush[%t]", bp.Addr, msg, doFlush)
 
 	if len(msg) > netd.MAX_PAYLOAD_SIZE {
 		err := fmt.Errorf("Data is above allowed payload size of %d", netd.MAX_PAYLOAD_SIZE)
 		bp.Config.Log.Error(context, "SendMessage", err, "Completed")
 		return err
+	}
+
+	if !bytes.HasSuffix(msg, ctrlLine) {
+		msg = append(msg, ctrlLine...)
 	}
 
 	var err error
@@ -174,18 +180,3 @@ func (bp *BaseProvider) BaseInfo() netd.BaseInfo {
 func (bp *BaseProvider) CloseNotify() chan struct{} {
 	return bp.closer
 }
-
-// // ReadLoop provides a means of intersecting with the looping mechanism
-// // for a BaseProvider, its an optional mechanism to provide a callback
-// // like state of behaviour for the way the loop works.
-// func (bp *BaseProvider) ReadLoop(context interface{}, loopFn func(*BaseProvider)) {
-//   bp.Lock.Lock()
-//   defer bp.Waiter.Done()
-//   bp.Lock.Unlock()
-
-//   {
-//     for bp.running {
-//       loopFn(bp)
-//     }
-//   }
-// }
