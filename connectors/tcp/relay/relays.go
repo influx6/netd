@@ -29,7 +29,8 @@ var (
 	info     = []byte("INFO")
 	sub      = []byte("SUB")
 	unsub    = []byte("UNSUB")
-	listSub  = []byte("LISTSB")
+	subs     = []byte("SUBS")
+	cluster  = []byte("CLUSTER")
 	msgBegin = []byte("MSG_PAYLOAD")
 	msgEnd   = []byte("MSG_END")
 )
@@ -84,10 +85,10 @@ type relay struct {
 	scratch   bytes.Buffer // scratch buffer for payload.
 }
 
-// connect clusters attempts to find all clusters using the providing ip and
-// connect to them.
-func (rl *relay) connectClusters() {
+func (rl *relay) negotiateCluster(context interface{}) {
+	rl.Config.Log.Log(context, "negotiateCluster", "Started : Cluster[%s] : Negotiating Begun", rl.RemoteAddr())
 
+	rl.Config.Log.Log(context, "negotiateCluster", "Completed")
 }
 
 func (rl *relay) ReadLoop(context interface{}) {
