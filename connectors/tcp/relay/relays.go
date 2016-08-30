@@ -22,20 +22,21 @@ var (
 	newLine     = []byte("\n")
 
 	// message types for different responses
-	okMessage   = []byte("+OK\r\n")
-	pingMessage = []byte("PING\r\n")
-	pongMessage = []byte("P0NG\r\n")
 	errMessage  = []byte("+ERR")
+	respMessage = []byte("+RESP")
 
 	// request message types
-	connect  = []byte("CONNECT")
-	info     = []byte("INFO")
-	sub      = []byte("SUB")
-	unsub    = []byte("UNSUB")
-	subs     = []byte("SUBS")
-	cluster  = []byte("CLUSTER")
-	msgBegin = []byte("MSG_PAYLOAD")
-	msgEnd   = []byte("MSG_END")
+	okMessage   = []byte("OK")
+	pingMessage = []byte("PING")
+	pongMessage = []byte("P0NG")
+	connect     = []byte("CONNECT")
+	info        = []byte("INFO")
+	sub         = []byte("SUB")
+	unsub       = []byte("UNSUB")
+	subs        = []byte("SUBS")
+	cluster     = []byte("CLUSTER")
+	msgBegin    = []byte("MSG_PAYLOAD")
+	msgEnd      = []byte("MSG_END")
 
 	invalidClusterInfo  = []byte("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
 	noResponse          = []byte("Failed to recieve response")
@@ -98,7 +99,7 @@ type relay struct {
 func (rl *relay) negotiateCluster(context interface{}) error {
 	rl.Config.Log.Log(context, "negotiateCluster", "Started : Cluster[%s] : Negotiating Begun", rl.Addr)
 
-	if rl.Connection == nil || rl.Connection.Conn == nil {
+	if rl.IsClosed() {
 		return errors.New("Relay underline connection closed")
 	}
 
@@ -138,7 +139,7 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 	}
 
 	infoMessage := messages[0]
-	if !bytes.Equal(infoMessage.Command, info) {
+	if !bytes.Equal(infoMessage.Command, respMessage) {
 		if err := rl.SendMessage(context, expectedInfoFailed, true); err != nil {
 			rl.Config.Log.Error(context, "negotiateCluster", err, "Completed")
 			return err
@@ -165,7 +166,7 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 
 	rl.BaseProvider.MyInfo = realInfo
 
-	if err := rl.SendMessage(context, okMessage, true); err != nil {
+	if err := rl.SendResponse(context, okMessage, true); err != nil {
 		rl.Config.Log.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -200,11 +201,7 @@ func (rl *relay) ReadLoop(context interface{}) {
 
 	{
 	loopRunner:
-		for rl.IsRunning() {
-
-			if rl.Conn == nil {
-				break loopRunner
-			}
+		for rl.IsRunning() && !rl.IsClosed() {
 
 			n, err := rl.Conn.Read(block)
 			if err != nil {
@@ -284,7 +281,7 @@ func (rl *relay) parse(context interface{}, data []byte) error {
 				return err
 			}
 
-			rl.SendMessage(context, info, true)
+			rl.SendResponse(context, info, true)
 		case bytes.Equal(cmd, cluster):
 			if dataLen != 2 {
 				err := errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
@@ -307,7 +304,7 @@ func (rl *relay) parse(context interface{}, data []byte) error {
 				return err
 			}
 
-			return rl.SendMessage(context, okMessage, true)
+			return rl.SendResponse(context, okMessage, true)
 		case bytes.Equal(cmd, sub):
 
 		case bytes.Equal(cmd, unsub):

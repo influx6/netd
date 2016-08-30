@@ -27,8 +27,9 @@ type BaseProvider struct {
 	Router netd.Router
 	Addr   string
 
-	running bool
-	closer  chan struct{}
+	running  bool
+	isClosed bool
+	closer   chan struct{}
 }
 
 // NewBaseProvider returns a new instance of a BaseProvider.
@@ -52,7 +53,7 @@ func (bp *BaseProvider) Close(context interface{}) error {
 
 	bp.Lock.Lock()
 
-	if bp.Connection == nil || bp.Connection.Conn == nil {
+	if bp.isClosed {
 		bp.Lock.Unlock()
 		err := errors.New("Already closed")
 		bp.Config.Log.Error(context, "Close", err, "Completed ")
@@ -68,17 +69,24 @@ func (bp *BaseProvider) Close(context interface{}) error {
 	bp.Lock.Lock()
 
 	if err := bp.Connection.Close(); err != nil {
-		bp.Connection.Conn = nil
+		bp.isClosed = true
 		bp.Lock.Unlock()
 		bp.Config.Log.Error(context, "Close", err, "Completed ")
 		return err
 	}
 
-	bp.Connection.Conn = nil
+	bp.isClosed = true
 	bp.Lock.Unlock()
 
 	bp.Config.Log.Log(context, "Close", "Completed ")
 	return nil
+}
+
+func (bp *BaseProvider) IsClosed() bool {
+	bp.Lock.Lock()
+	state := bp.isClosed
+	bp.Lock.Unlock()
+	return state
 }
 
 // IsRunning returns true/false if the base provider is still running.
@@ -120,10 +128,28 @@ func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payl
 	return bp.SendMessage(context, bu.Bytes(), true)
 }
 
+var respHeader = []byte("+RESP")
+
+// SendResponse sends a giving response to the connection. This is used for mainly responding to
+// requests recieved through the pipeline.
+func (bp *BaseProvider) SendResponse(context interface{}, msg []byte, doFlush bool) error {
+	response := bytes.Join([][]byte{respHeader, msg}, lineBreak)
+	return bp.SendMessage(context, wrapBlock(response), doFlush)
+}
+
+var errorHeader = []byte("+ERR")
+
+// SendError sends a giving error response to the connection. This is used for mainly responding to
+// requests recieved through the pipeline.
+func (bp *BaseProvider) SendError(context interface{}, msg []byte, doFlush bool) error {
+	response := bytes.Join([][]byte{errorHeader, msg}, lineBreak)
+	return bp.SendMessage(context, wrapBlock(response), doFlush)
+}
+
 // SendMessage sends a message into the provider connection. This exists for
 // the outside which wishes to call a write into the connection.
 func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush bool) error {
-	bp.Config.Log.Log(context, "SendMessage", "Started : Connection[%+s] : Data[%s] :  Flush[%t]", bp.Addr, msg, doFlush)
+	bp.Config.Log.Log(context, "SendMessage", "Started : Connection[%+s] : Data[%q] :  Flush[%t]", bp.Addr, msg, doFlush)
 
 	if len(msg) > netd.MAX_PAYLOAD_SIZE {
 		err := fmt.Errorf("Data is above allowed payload size of %d", netd.MAX_PAYLOAD_SIZE)
@@ -136,7 +162,7 @@ func (bp *BaseProvider) SendMessage(context interface{}, msg []byte, doFlush boo
 	}
 
 	var err error
-	if bp.Writer != nil && bp.Connection != nil && bp.Connection.Conn != nil {
+	if bp.Writer != nil && !bp.IsClosed() {
 		var deadlineSet bool
 
 		if bp.Writer.Available() < len(msg) {
@@ -179,4 +205,8 @@ func (bp *BaseProvider) BaseInfo() netd.BaseInfo {
 // the base provider.
 func (bp *BaseProvider) CloseNotify() chan struct{} {
 	return bp.closer
+}
+
+func wrapBlock(msg []byte) []byte {
+	return bytes.Join([][]byte{[]byte("{"), msg, []byte("}")}, emptyString)
 }

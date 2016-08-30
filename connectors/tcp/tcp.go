@@ -19,6 +19,7 @@ var (
 	ctrl = "\r\n"
 
 	allSubs     = []byte("*")
+	lineBreak   = []byte("|")
 	emptyString = []byte("")
 	endTrace    = []byte("End Trace")
 	ctrlLine    = []byte(ctrl)
