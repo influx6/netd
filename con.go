@@ -35,6 +35,8 @@ type Provider interface {
 	BaseInfo() BaseInfo
 	Close(context interface{}) error
 	SendMessage(context interface{}, msg []byte, flush bool) error
+	SendResponse(context interface{}, msg []byte, flush bool) error
+	SendError(context interface{}, msg error, flush bool) error
 	CloseNotify() chan struct{}
 }
 

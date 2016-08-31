@@ -38,11 +38,11 @@ var (
 	msgBegin    = []byte("MSG_PAYLOAD")
 	msgEnd      = []byte("MSG_END")
 
-	invalidClusterInfo  = []byte("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
-	noResponse          = []byte("Failed to recieve response")
-	invalidInfoResponse = []byte("Failed to unmarshal info data")
-	negotationFailed    = []byte("Failed to negotiate with new cluster")
-	expectedInfoFailed  = []byte("Failed to receive info response for connect")
+	invalidClusterInfo  = errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
+	noResponse          = errors.New("Failed to recieve response")
+	invalidInfoResponse = errors.New("Failed to unmarshal info data")
+	negotationFailed    = errors.New("Failed to negotiate with new cluster")
+	expectedInfoFailed  = errors.New("Failed to receive info response for connect")
 )
 
 // ClientHandler provides a package-level netd.Provider generator function which can be used to
@@ -110,7 +110,7 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 
 	block := make([]byte, netd.MIN_DATA_WRITE_SIZE)
 
-	rl.Conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	rl.Conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
 	n, err := rl.Conn.Read(block)
 	if err != nil {
@@ -128,7 +128,7 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 	}
 
 	if len(messages) == 0 {
-		if err := rl.SendMessage(context, noResponse, true); err != nil {
+		if err := rl.SendError(context, noResponse, true); err != nil {
 			rl.Config.Log.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
@@ -139,8 +139,9 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 	}
 
 	infoMessage := messages[0]
+	fmt.Printf("message: %+s -> %+q\n", infoMessage, messages)
 	if !bytes.Equal(infoMessage.Command, respMessage) {
-		if err := rl.SendMessage(context, expectedInfoFailed, true); err != nil {
+		if err := rl.SendError(context, expectedInfoFailed, true); err != nil {
 			rl.Config.Log.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
@@ -155,7 +156,7 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 	var realInfo netd.BaseInfo
 
 	if err := json.Unmarshal(infoData, &realInfo); err != nil {
-		if err := rl.SendMessage(context, invalidInfoResponse, true); err != nil {
+		if err := rl.SendError(context, invalidInfoResponse, true); err != nil {
 			rl.Config.Log.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
@@ -184,7 +185,7 @@ func (rl *relay) ReadLoop(context interface{}) {
 	isCluster = rl.isCluster
 	rl.Lock.Unlock()
 
-	if isCluster {
+	if isCluster && rl.ServerInfo.ConnectInitiator {
 		if err := rl.negotiateCluster(context); err != nil {
 			rl.SendMessage(context, makeErr("Error negotiating with  cluster: %s", err.Error()), true)
 			rl.Waiter.Done()
@@ -209,11 +210,13 @@ func (rl *relay) ReadLoop(context interface{}) {
 				break loopRunner
 			}
 
-			rl.Config.Trace.Trace(context, []byte("--TRACE Started ------------------------------\n"))
-			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("Connection %s\n", rl.Addr)))
-			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%q", block[:n])))
-			rl.Config.Trace.Trace(context, []byte("\n"))
-			rl.Config.Trace.Trace(context, []byte("--TRACE Finished --------------------------\n"))
+			var trace [][]byte
+			trace = append(trace, []byte("--TRACE Started ------------------------------\n"))
+			trace = append(trace, []byte(fmt.Sprintf("Connection %s\n", rl.Addr)))
+			trace = append(trace, []byte(fmt.Sprintf("%q", block[:n])))
+			trace = append(trace, []byte("\n"))
+			trace = append(trace, []byte("--TRACE Finished --------------------------\n"))
+			rl.Config.Trace.Trace(context, bytes.Join(trace, emptyString))
 
 			if err := rl.parse(context, block[:n]); err != nil {
 				rl.SendMessage(context, makeErr("Error reading from client: %s", err.Error()), true)
@@ -239,21 +242,17 @@ func (rl *relay) ReadLoop(context interface{}) {
 func (rl *relay) parse(context interface{}, data []byte) error {
 	rl.Config.Log.Log(context, "parse", "Started  :  Connection [%s] :  Data{%+q}", rl.Addr, data)
 
-	var isCl bool
-
-	rl.Lock.Lock()
-	isCl = rl.isCluster
-	rl.Lock.Unlock()
-
 	messages, err := rl.parser.Parse(data)
 	if err != nil {
 		rl.Config.Log.Error(context, "parse", err, "Completed  :  Connection[%s] : Data{%+q}", rl.Addr)
 		return err
 	}
 
-	rl.Config.Trace.Trace(context, []byte("--TRACE Started ------------------------------\n"))
-	rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%+q\n", messages)))
-	rl.Config.Trace.Trace(context, []byte("--TRACE Finished --------------------------\n"))
+	var trace [][]byte
+	trace = append(trace, []byte("--TRACE Started ------------------------------\n"))
+	trace = append(trace, []byte(fmt.Sprintf("%+q\n", messages)))
+	trace = append(trace, []byte("--TRACE Finished --------------------------\n"))
+	rl.Config.Trace.Trace(context, bytes.Join(trace, emptyString))
 
 	for _, message := range messages {
 		cmd := bytes.ToUpper(message.Command)
@@ -261,19 +260,13 @@ func (rl *relay) parse(context interface{}, data []byte) error {
 
 		switch {
 		case bytes.Equal(cmd, connect):
-			if !isCl {
-				rl.SendMessage(context, makeErr("Error handling CONNECT for non-cluster: %s", err.Error()), true)
-				rl.Config.Log.Error(context, "parse", err, "Completed  :  Connection [%s]", rl.Addr)
-				return err
-			}
-
 			info, err := json.Marshal(rl.Connection.ServerInfo)
 			if err != nil {
 				rl.Config.Log.Error(context, "parse", err, "Completed  :  Connection [%s]", rl.Addr)
 				return err
 			}
 
-			rl.SendMessage(context, info, true)
+			rl.SendResponse(context, info, true)
 		case bytes.Equal(cmd, info):
 			info, err := json.Marshal(rl.BaseInfo())
 			if err != nil {
@@ -285,7 +278,7 @@ func (rl *relay) parse(context interface{}, data []byte) error {
 		case bytes.Equal(cmd, cluster):
 			if dataLen != 2 {
 				err := errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
-				rl.SendMessage(context, invalidClusterInfo, true)
+				rl.SendError(context, invalidClusterInfo, true)
 				rl.Config.Log.Error(context, "parse", err, "Completed  :  Connection [%s]", rl.Addr)
 				return err
 			}
@@ -293,13 +286,13 @@ func (rl *relay) parse(context interface{}, data []byte) error {
 			addr := string(message.Data[0])
 			port, err := strconv.Atoi(string(message.Data[1]))
 			if err != nil {
-				rl.SendMessage(context, []byte("Port is not a int: "+err.Error()), true)
+				rl.SendError(context, fmt.Errorf("Port is not a int: "+err.Error()), true)
 				rl.Config.Log.Error(context, "parse", err, "Completed  :  Connection [%s]", rl.Addr)
 				return err
 			}
 
 			if err := rl.Connections.NewClusterFromAddr(context, addr, port); err != nil {
-				rl.SendMessage(context, []byte("New Cluster Connect failed: "+err.Error()), true)
+				rl.SendError(context, fmt.Errorf("New Cluster Connect failed: "+err.Error()), true)
 				rl.Config.Log.Error(context, "parse", err, "Completed  :  Connection [%s]", rl.Addr)
 				return err
 			}

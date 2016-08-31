@@ -141,9 +141,16 @@ var errorHeader = []byte("+ERR")
 
 // SendError sends a giving error response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
-func (bp *BaseProvider) SendError(context interface{}, msg []byte, doFlush bool) error {
-	response := bytes.Join([][]byte{errorHeader, msg}, lineBreak)
-	return bp.SendMessage(context, wrapBlock(response), doFlush)
+func (bp *BaseProvider) SendError(context interface{}, msg error, doFlush bool) error {
+	bp.Config.Log.Log(context, "SendResponse", "Started : Connection[%+s]", bp.Addr)
+	response := bytes.Join([][]byte{errorHeader, []byte(msg.Error())}, lineBreak)
+	if err := bp.SendMessage(context, wrapBlock(response), doFlush); err != nil {
+		bp.Config.Log.Error(context, "SendResponse", err, "Completed")
+		return err
+	}
+
+	bp.Config.Log.Log(context, "SendResponse", "Completed")
+	return nil
 }
 
 // SendMessage sends a message into the provider connection. This exists for

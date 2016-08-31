@@ -435,6 +435,7 @@ func (c *TCPConn) NewCluster(context interface{}, conn net.Conn) error {
 	info.Version = netd.VERSION
 	info.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	info.GoVersion = runtime.Version()
+	info.ConnectInitiator = true
 
 	c.mc.Lock()
 	info.ServerID = c.sid
@@ -533,7 +534,7 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 
 		if !ok && c.config.MustAuthenticate {
 			config.Log.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-			provider.SendMessage(context, []byte("Error: Provider has no authentication. Authentication needed"), true)
+			provider.SendError(context, errors.New("Error: Provider has no authentication. Authentication needed"), true)
 			provider.Close(context)
 			return errors.New("Provider has no authenticator")
 		}
@@ -541,7 +542,7 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		if !config.ClusterAuth.Authenticate(providerAuth) {
 			if !config.MatchClusterCredentials(providerAuth.Credentials()) {
 				config.Log.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-				provider.SendMessage(context, []byte("Error: Authentication failed"), true)
+				provider.SendError(context, errors.New("Error: Authentication failed"), true)
 				provider.Close(context)
 				return errors.New("Authentication failed")
 			}
@@ -594,7 +595,7 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 		providerAuth, ok := provider.(netd.ClientAuth)
 		if !ok && c.config.MustAuthenticate {
 			config.Log.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-			provider.SendMessage(context, []byte("Error: Provider has no authentication. Authentication needed"), true)
+			provider.SendError(context, errors.New("Error: Provider has no authentication. Authentication needed"), true)
 			provider.Close(context)
 			return errors.New("Provider has no authenticator")
 		}
@@ -602,7 +603,7 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 		if !config.ClientAuth.Authenticate(providerAuth) {
 			if !config.MatchClientCredentials(providerAuth.Credentials()) {
 				config.Log.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-				provider.SendMessage(context, []byte("Error: Authentication failed"), true)
+				provider.SendError(context, errors.New("Error: Authentication failed"), true)
 				provider.Close(context)
 				return errors.New("Authentication failed")
 			}
