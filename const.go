@@ -63,6 +63,10 @@ const (
 	// DEFAULT_DIAL_TIMEOUT is how often pings are sent to clients and routes.
 	DEFAULT_DIAL_TIMEOUT = 3 * time.Second
 
+	// DEFAULT_CLUSTER_NEGOTIATION_TIMEOUT defins the timeout for read op on cluster
+	// setup.
+	DEFAULT_CLUSTER_NEGOTIATION_TIMEOUT = 30 * time.Second
+
 	// DEFAULT_PING_MAX_OUT is maximum allowed pings outstanding before disconnect.
 	DEFAULT_PING_MAX_OUT = 2
 )

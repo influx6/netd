@@ -10,7 +10,9 @@ import (
 
 // Trace defines an interface which receives data trace data logs.
 type Trace interface {
+	Begin(context interface{}, msg []byte)
 	Trace(context interface{}, msg []byte)
+	End(context interface{}, msg []byte)
 }
 
 // Tracer defines a empty tracer struct which allows a inplace tracer for when
@@ -19,7 +21,9 @@ var Tracer tracer
 
 type tracer struct{}
 
+func (tracer) Begin(context interface{}, msg []byte) {}
 func (tracer) Trace(context interface{}, msg []byte) {}
+func (tracer) End(context interface{}, msg []byte)   {}
 
 // Log defines an interface which receives logs events/messages.
 type Log interface {

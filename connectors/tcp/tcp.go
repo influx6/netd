@@ -426,7 +426,7 @@ func (c *TCPConn) NewClusterFromAddr(context interface{}, addr string, port int)
 func (c *TCPConn) NewCluster(context interface{}, conn net.Conn) error {
 	c.config.Log.Log(context, "tcp.NewConn", "Started : For[%s]", conn.RemoteAddr().String())
 
-	ip, port, _ := net.SplitHostPort(c.tcpClient.Addr().String())
+	ip, port, _ := net.SplitHostPort(c.clusterAddr)
 	iport, _ := strconv.Atoi(port)
 
 	var info netd.BaseInfo

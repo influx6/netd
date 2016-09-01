@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -28,11 +29,22 @@ func (l logger) Error(context interface{}, fn string, err error, message string,
 }
 
 type tracer struct {
+	b  bytes.Buffer
 	in io.Writer
 }
 
+func (t tracer) Begin(context interface{}, msg []byte) {
+	t.b.Write([]byte(fmt.Sprintf("--TRACE [%+q] Begin------------------------------", msg)))
+}
+
 func (t tracer) Trace(context interface{}, msg []byte) {
-	fmt.Fprintf(t.in, "%s", msg)
+	t.b.Write(msg)
+}
+
+func (t tracer) End(context interface{}, msg []byte) {
+	t.b.Write([]byte(fmt.Sprintf("--TRACE [%+q] Ended------------------------------", msg)))
+	t.in.Write(t.b.Bytes())
+	t.b.Reset()
 }
 
 func main() {

@@ -110,7 +110,7 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 
 	block := make([]byte, netd.MIN_DATA_WRITE_SIZE)
 
-	rl.Conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	rl.Conn.SetReadDeadline(time.Now().Add(netd.DEFAULT_CLUSTER_NEGOTIATION_TIMEOUT))
 
 	n, err := rl.Conn.Read(block)
 	if err != nil {
@@ -139,7 +139,6 @@ func (rl *relay) negotiateCluster(context interface{}) error {
 	}
 
 	infoMessage := messages[0]
-	fmt.Printf("message: %+s -> %+q\n", infoMessage, messages)
 	if !bytes.Equal(infoMessage.Command, respMessage) {
 		if err := rl.SendError(context, expectedInfoFailed, true); err != nil {
 			rl.Config.Log.Error(context, "negotiateCluster", err, "Completed")
@@ -248,11 +247,9 @@ func (rl *relay) parse(context interface{}, data []byte) error {
 		return err
 	}
 
-	var trace [][]byte
-	trace = append(trace, []byte("--TRACE Started ------------------------------\n"))
-	trace = append(trace, []byte(fmt.Sprintf("%+q\n", messages)))
-	trace = append(trace, []byte("--TRACE Finished --------------------------\n"))
-	rl.Config.Trace.Trace(context, bytes.Join(trace, emptyString))
+	rl.Config.Trace.Begin(context, []byte("parse"))
+	rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%+q\n", messages)))
+	rl.Config.Trace.End(context, []byte("parse"))
 
 	for _, message := range messages {
 		cmd := bytes.ToUpper(message.Command)
