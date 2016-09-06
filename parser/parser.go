@@ -7,11 +7,13 @@ import (
 
 var (
 	ctrl              = "\r\n"
+	lineBreak         = []byte("|")
 	emptyString       = []byte("")
 	ctrlLine          = []byte(ctrl)
 	newLine           = []byte("\n")
 	newCl             = []byte("\r")
 	colon             = byte(':')
+	colonSlice        = []byte(":")
 	endBracket        = byte('}')
 	beginBracket      = byte('{')
 	endBracketSlice   = []byte("}")
@@ -20,8 +22,8 @@ var (
 	beginColonBracket = []byte(":{")
 )
 
-// BlockParser defines a package level parser using the blockMessage specification.
-/* The block message specification is based on the idea of a simple text based
+/* BlockParser defines a package level parser using the blockMessage specification.
+ The block message specification is based on the idea of a simple text based
    protocol which follows specific rules about messages. These rules which are:
 
    1. All messages must end with a CRTL line ending `\r\n`.
@@ -233,4 +235,45 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 	}
 
 	return blocks, nil
+}
+
+//==============================================================================
+
+// WrapBlock wraps a message in a opening and closing bracket.
+func WrapBlock(msg []byte) []byte {
+	return bytes.Join([][]byte{[]byte("{"), msg, []byte("}")}, emptyString)
+}
+
+// WrapParts wraps the provided bytes slices with a | symbol.
+func WrapBlockParts(msg [][]byte) []byte {
+	return bytes.Join(msg, lineBreak)
+}
+
+// WrapWithHeader wraps a message with a response wit the given header
+// returning a single byte slice.
+func WrapWithHeader(header []byte, msg []byte) []byte {
+	return bytes.Join([][]byte{header, msg}, lineBreak)
+}
+
+// WrapResponses wraps each byte slice in the multiple byte slice with with
+// given header returning a single byte slice joined with a colon : symbol.
+func WrapResponses(header []byte, msgs ...[][]byte) []byte {
+	var responses [][]byte
+
+	for _, blocks := range msgs {
+		var mod []byte
+
+		if len(header) == 0 {
+			mod = WrapWithHeader(header, WrapBlockParts(blocks))
+		} else {
+			WrapBlockParts(blocks)
+		}
+
+		responses = append(
+			responses,
+			WrapBlock(mod),
+		)
+	}
+
+	return bytes.Join(responses, colonSlice)
 }

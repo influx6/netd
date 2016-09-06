@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/influx6/netd"
+	"github.com/influx6/netd/parser"
 )
 
 // BaseProvider creates a base provider structure for use in writing handlers
@@ -128,23 +129,43 @@ func (bp *BaseProvider) Fire(context interface{}, params map[string]string, payl
 	return bp.SendMessage(context, bu.Bytes(), true)
 }
 
+//==============================================================================
+
+// SendResponse sends a giving response to the connection. This is used for mainly responding to
+// requests recieved through the pipeline.
+func (bp *BaseProvider) SendRequest(context interface{}, doFlush bool, msg ...[][]byte) error {
+	response := parser.WrapResponses(nil, msg...)
+	return bp.SendMessage(context, response, doFlush)
+}
+
+//==============================================================================
+
 var respHeader = []byte("+RESP")
 
 // SendResponse sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
-func (bp *BaseProvider) SendResponse(context interface{}, msg []byte, doFlush bool) error {
-	response := bytes.Join([][]byte{respHeader, msg}, lineBreak)
-	return bp.SendMessage(context, wrapBlock(response), doFlush)
+func (bp *BaseProvider) SendResponse(context interface{}, doFlush bool, msg ...[][]byte) error {
+	response := parser.WrapResponses(respHeader, msg...)
+	return bp.SendMessage(context, response, doFlush)
 }
+
+//==============================================================================
 
 var errorHeader = []byte("+ERR")
 
 // SendError sends a giving error response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
-func (bp *BaseProvider) SendError(context interface{}, msg error, doFlush bool) error {
+func (bp *BaseProvider) SendError(context interface{}, doFlush bool, msg ...error) error {
 	bp.Config.Log.Log(context, "SendResponse", "Started : Connection[%+s]", bp.Addr)
-	response := bytes.Join([][]byte{errorHeader, []byte(msg.Error())}, lineBreak)
-	if err := bp.SendMessage(context, wrapBlock(response), doFlush); err != nil {
+
+	var errs [][][]byte
+
+	for _, err := range msg {
+		errbs := []byte(err.Error())
+		errs = append(errs, [][]byte{errbs})
+	}
+
+	if err := bp.SendMessage(context, parser.WrapResponses(errorHeader, errs...), doFlush); err != nil {
 		bp.Config.Log.Error(context, "SendResponse", err, "Completed")
 		return err
 	}
@@ -152,6 +173,8 @@ func (bp *BaseProvider) SendError(context interface{}, msg error, doFlush bool) 
 	bp.Config.Log.Log(context, "SendResponse", "Completed")
 	return nil
 }
+
+//==============================================================================
 
 // SendMessage sends a message into the provider connection. This exists for
 // the outside which wishes to call a write into the connection.

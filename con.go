@@ -2,6 +2,31 @@ package netd
 
 import "sync"
 
+// Messages defines an interface which exposes methods for sending messages down
+// a connection pipeline.
+type Messages interface {
+	SendMessage(context interface{}, msg []byte, flush bool) error
+	SendError(context interface{}, flush bool, msg ...error) error
+	SendRequest(context interface{}, flush bool, msg ...[][]byte) error
+	SendResponse(context interface{}, flush bool, msg ...[][]byte) error
+}
+
+// RequestResponse defines an interface for a provider which handles the
+// processinging of requests and its response to a provider.
+type RequestResponse interface {
+	Process(context interface{}, msg []byte, m Messages) error
+}
+
+// Provider defines a interface for a connection handler, which ensures
+// to manage the request-response cycle of a provided net.Conn.
+type Provider interface {
+	Messages
+	Subscriber
+	BaseInfo() BaseInfo
+	CloseNotify() chan struct{}
+	Close(context interface{}) error
+}
+
 // Subscriber defines an interface for routes to be fired upon when matched.
 type Subscriber interface {
 	Fire(context interface{}, params map[string]string, payload interface{}) error
@@ -26,18 +51,6 @@ type Connections interface {
 	Clusters(context interface{}) SearchableInfo
 	SendToClients(context interface{}, msg []byte, flush bool) error
 	SendToClusters(context interface{}, msg []byte, flush bool) error
-}
-
-// Provider defines a interface for a connection handler, which ensures
-// to manage the request-response cycle of a provided net.Conn.
-type Provider interface {
-	Subscriber
-	BaseInfo() BaseInfo
-	Close(context interface{}) error
-	SendMessage(context interface{}, msg []byte, flush bool) error
-	SendResponse(context interface{}, msg []byte, flush bool) error
-	SendError(context interface{}, msg error, flush bool) error
-	CloseNotify() chan struct{}
 }
 
 // ConnectionEvents defines a interface which defines a connection event
