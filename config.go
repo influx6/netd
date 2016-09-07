@@ -25,15 +25,15 @@ func (tracer) Begin(context interface{}, msg []byte) {}
 func (tracer) Trace(context interface{}, msg []byte) {}
 func (tracer) End(context interface{}, msg []byte)   {}
 
-// Log defines an interface which receives logs events/messages.
-type Log interface {
+// Logger defines an interface which receives logs events/messages.
+type Logger interface {
 	Log(context interface{}, targetFunc string, message string, data ...interface{})
 	Error(context interface{}, targetFunc string, err error, message string, data ...interface{})
 }
 
 // Logger defines an empty logger which can be used in place for when logging is
 // is not set.
-var Logger logger
+var Log logger
 
 type logger struct{}
 
@@ -52,8 +52,8 @@ type Credential struct {
 // Config provides a configuration struct which defines specific settings for
 // the connection handler.
 type Config struct {
-	Trace Trace `json:"-"`
-	Log   Log   `json:"-"`
+	Trace
+	Logger
 
 	ClientCrendentails []Credential `json:"-"`
 
@@ -94,8 +94,8 @@ type Config struct {
 // InitLogAndTrace checks and assigns dummy log and trace callers to the config
 // if that was not set to ensure calls get passed through without panics.
 func (c *Config) InitLogAndTrace() {
-	if c.Log == nil {
-		c.Log = Logger
+	if c.Logger == nil {
+		c.Logger = Log
 	}
 	if c.Trace == nil {
 		c.Trace = Tracer

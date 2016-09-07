@@ -14,7 +14,7 @@ type Messages interface {
 // RequestResponse defines an interface for a provider which handles the
 // processinging of requests and its response to a provider.
 type RequestResponse interface {
-	Process(context interface{}, msg []byte, m Messages) error
+	Process(context interface{}, msg []byte, m Messages, r Router) error
 }
 
 // Provider defines a interface for a connection handler, which ensures

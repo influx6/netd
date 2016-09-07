@@ -15,17 +15,6 @@ import (
 	"github.com/pborman/uuid"
 )
 
-var (
-	ctrl = "\r\n"
-
-	allSubs     = []byte("*")
-	lineBreak   = []byte("|")
-	emptyString = []byte("")
-	endTrace    = []byte("End Trace")
-	ctrlLine    = []byte(ctrl)
-	newLine     = []byte("\n")
-)
-
 // Connections takes a net.Conn and returns a Connection instance which wraps the
 // provided net.Conn for usage.
 type Connections interface {
@@ -89,7 +78,7 @@ func New(c netd.Config) *TCPConn {
 	c.InitLogAndTrace()
 
 	if err := c.ParseTLS(); err != nil {
-		c.Log.Error("netd.TCP", "TCP", err, "Error parsing tls arguments")
+		c.Error("netd.TCP", "TCP", err, "Error parsing tls arguments")
 		panic(err)
 	}
 
@@ -149,7 +138,7 @@ func (c *TCPConn) Clusters(context interface{}) netd.SearchableInfo {
 
 // SendToClusters sends the provided message to all clusters.
 func (c *TCPConn) SendToClusters(context interface{}, msg []byte, flush bool) error {
-	c.config.Log.Log(context, "SendToCluster", "Started : Data[%+s]", msg)
+	c.config.Log(context, "SendToCluster", "Started : Data[%+s]", msg)
 
 	c.mc.Lock()
 	defer c.mc.Unlock()
@@ -171,19 +160,19 @@ func (c *TCPConn) SendToClusters(context interface{}, msg []byte, flush bool) er
 		c.config.Trace.Trace(context, bytes.Join(b, emptyString))
 
 		if err := cluster.SendMessage(context, msg, flush); err != nil {
-			c.config.Log.Error(context, "SendToCluster", err, "Failed to deliver to cluster : Cluster[%s]", cluster.BaseInfo().String())
+			c.config.Error(context, "SendToCluster", err, "Failed to deliver to cluster : Cluster[%s]", cluster.BaseInfo().String())
 		}
 
 		c.config.Trace.Trace(context, endTrace)
 	}
 
-	c.config.Log.Log(context, "SendToCluster", "Completed")
+	c.config.Log(context, "SendToCluster", "Completed")
 	return nil
 }
 
 // SendToClusters sends the provided message to all clients.
 func (c *TCPConn) SendToClients(context interface{}, msg []byte, flush bool) error {
-	c.config.Log.Log(context, "SendToClient", "Started : Data[%+s]", msg)
+	c.config.Log(context, "SendToClient", "Started : Data[%+s]", msg)
 
 	c.mc.Lock()
 	defer c.mc.Unlock()
@@ -205,13 +194,13 @@ func (c *TCPConn) SendToClients(context interface{}, msg []byte, flush bool) err
 		c.config.Trace.Trace(context, bytes.Join(b, emptyString))
 
 		if err := client.SendMessage(context, msg, flush); err != nil {
-			c.config.Log.Error(context, "SendToClient", err, "Failed to deliver to client : ClientInfo[%s]", client.BaseInfo().String())
+			c.config.Error(context, "SendToClient", err, "Failed to deliver to client : ClientInfo[%s]", client.BaseInfo().String())
 		}
 
 		c.config.Trace.Trace(context, endTrace)
 	}
 
-	c.config.Log.Log(context, "SendToClient", "Completed")
+	c.config.Log(context, "SendToClient", "Completed")
 	return nil
 }
 
@@ -232,7 +221,7 @@ func (c *TCPConn) Close(context interface{}) error {
 	{
 		if c.tcpClient != nil {
 			if err := c.tcpClient.Close(); err != nil {
-				c.config.Log.Error(context, "Close", err, "Completed")
+				c.config.Error(context, "Close", err, "Completed")
 				c.mc.Unlock()
 				return err
 			}
@@ -240,7 +229,7 @@ func (c *TCPConn) Close(context interface{}) error {
 
 		if c.tcpCluster != nil {
 			if err := c.tcpCluster.Close(); err != nil {
-				c.config.Log.Error(context, "Close", err, "Completed")
+				c.config.Error(context, "Close", err, "Completed")
 				c.mc.Unlock()
 				return err
 			}
@@ -259,13 +248,13 @@ func (c *TCPConn) Close(context interface{}) error {
 
 	for _, client := range clients {
 		if err := client.Close("tcp.Close"); err != nil {
-			c.config.Log.Error(context, "Close", err, "Failed To Close Client")
+			c.config.Error(context, "Close", err, "Failed To Close Client")
 		}
 	}
 
 	for _, cluster := range clusters {
 		if err := cluster.Close("tcp.Close"); err != nil {
-			c.config.Log.Error(context, "Close", err, "Failed To Close Cluster")
+			c.config.Error(context, "Close", err, "Failed To Close Cluster")
 		}
 	}
 
@@ -290,14 +279,14 @@ func (c *TCPConn) IsRunning() bool {
 // ServeClusters runs to create the listener for listening to cluster based
 // requests for the tcp connection.
 func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
-	c.config.Log.Log(context, "tcp.ServeCluster", "Started : Initializing cluster service : Addr[%s] : Port[%d]", c.config.ClustersAddr, c.config.ClustersPort)
+	c.config.Log(context, "tcp.ServeCluster", "Started : Initializing cluster service : Addr[%s] : Port[%d]", c.config.ClustersAddr, c.config.ClustersPort)
 	addr := net.JoinHostPort(c.config.ClustersAddr, strconv.Itoa(c.config.ClustersPort))
 
 	var err error
 	c.mc.Lock()
 
 	if c.runningCluster {
-		c.config.Log.Log(context, "tcp.ServeCluster", "Completed")
+		c.config.Log(context, "tcp.ServeCluster", "Completed")
 		c.mc.Unlock()
 		return nil
 	}
@@ -306,7 +295,7 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 
 	c.tcpCluster, err = net.Listen("tcp", addr)
 	if err != nil {
-		c.config.Log.Error(context, "tcp.ServeCluster", err, "Completed")
+		c.config.Error(context, "tcp.ServeCluster", err, "Completed")
 		c.mc.Unlock()
 		return err
 	}
@@ -331,21 +320,21 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 
 	go c.listenerLoop(context, true, c.tcpCluster, info, h)
 
-	c.config.Log.Log(context, "tcp.ServeCluster", "Completed")
+	c.config.Log(context, "tcp.ServeCluster", "Completed")
 	return nil
 }
 
 // ServeClients runs to create the listener for listening to client based
 // requests for the tcp connection.
 func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
-	c.config.Log.Log(context, "tcp.ServeClients", "Started : Initializing client service : Addr[%s] : Port[%d]", c.config.Addr, c.config.Port)
+	c.config.Log(context, "tcp.ServeClients", "Started : Initializing client service : Addr[%s] : Port[%d]", c.config.Addr, c.config.Port)
 	addr := net.JoinHostPort(c.config.Addr, strconv.Itoa(c.config.Port))
 
 	var err error
 	c.mc.Lock()
 
 	if c.runningClient {
-		c.config.Log.Log(context, "tcp.ServeClients", "Completed")
+		c.config.Log(context, "tcp.ServeClients", "Completed")
 		c.mc.Unlock()
 		return nil
 	}
@@ -353,7 +342,7 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	c.clientHandler = h
 	c.tcpClient, err = net.Listen("tcp", addr)
 	if err != nil {
-		c.config.Log.Error(context, "tcp.ServeClients", err, "Completed")
+		c.config.Error(context, "tcp.ServeClients", err, "Completed")
 		c.mc.Unlock()
 		return err
 	}
@@ -378,18 +367,18 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 
 	go c.listenerLoop(context, false, c.tcpClient, info, h)
 
-	c.config.Log.Log(context, "tcp.ServeClients", "Completed")
+	c.config.Log(context, "tcp.ServeClients", "Completed")
 	return nil
 }
 
 func (c *TCPConn) NewClusterFromAddr(context interface{}, addr string, port int) error {
-	c.config.Log.Log(context, "tcp.NewConnFrom", "Started : Creating net.Conn   [%s: %d]", addr, port)
+	c.config.Log(context, "tcp.NewConnFrom", "Started : Creating net.Conn   [%s: %d]", addr, port)
 
 	c.mc.Lock()
 	if !c.runningCluster {
 		c.mc.Unlock()
 		err := errors.New("No clustering currently")
-		c.config.Log.Error(context, "tcp.NewConnFrom", err, "Completed")
+		c.config.Error(context, "tcp.NewConnFrom", err, "Completed")
 		return err
 	}
 
@@ -408,23 +397,23 @@ func (c *TCPConn) NewClusterFromAddr(context interface{}, addr string, port int)
 
 	if addr == ip && port == iport {
 		err := errors.New("Incapable of connecting to self")
-		c.config.Log.Error(context, "tcp.NewConnFrom", err, "Completed")
+		c.config.Error(context, "tcp.NewConnFrom", err, "Completed")
 		return err
 	}
 
 	caddr := net.JoinHostPort(addr, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", caddr, netd.DEFAULT_DIAL_TIMEOUT)
 	if err != nil {
-		c.config.Log.Error(context, "tcp.NewConnFrom", err, "Completed")
+		c.config.Error(context, "tcp.NewConnFrom", err, "Completed")
 		return err
 	}
 
-	c.config.Log.Log(context, "tcp.NewConnFrom", "Completed")
+	c.config.Log(context, "tcp.NewConnFrom", "Completed")
 	return c.NewCluster(context, conn)
 }
 
 func (c *TCPConn) NewCluster(context interface{}, conn net.Conn) error {
-	c.config.Log.Log(context, "tcp.NewConn", "Started : For[%s]", conn.RemoteAddr().String())
+	c.config.Log(context, "tcp.NewConn", "Started : For[%s]", conn.RemoteAddr().String())
 
 	ip, port, _ := net.SplitHostPort(c.clusterAddr)
 	iport, _ := strconv.Atoi(port)
@@ -447,16 +436,16 @@ func (c *TCPConn) NewCluster(context interface{}, conn net.Conn) error {
 	}
 
 	if err := c.newClusterConn(context, connection); err != nil {
-		c.config.Log.Error(context, "tcp.NewConn", err, "Completed")
+		c.config.Error(context, "tcp.NewConn", err, "Completed")
 		return err
 	}
 
-	c.config.Log.Log(context, "tcp.NewConn", "Completed")
+	c.config.Log(context, "tcp.NewConn", "Completed")
 	return nil
 }
 
 func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net.Listener, info netd.BaseInfo, h Handler) {
-	c.config.Log.Log(context, "tcp.listenerLoop", "Started")
+	c.config.Log(context, "tcp.listenerLoop", "Started")
 
 	c.mc.Lock()
 	config := c.config
@@ -474,9 +463,9 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 
 			conn, err := listener.Accept()
 			if err != nil {
-				config.Log.Error(context, "tcp.listenerLoop", err, "Accept Error")
+				config.Error(context, "tcp.listenerLoop", err, "Accept Error")
 				if tmpError, ok := err.(net.Error); ok && tmpError.Temporary() {
-					config.Log.Log(context, "tcp.listenerLoop", "Temporary error recieved, sleeping for %dms", sleepTime/time.Millisecond)
+					config.Log(context, "tcp.listenerLoop", "Temporary error recieved, sleeping for %dms", sleepTime/time.Millisecond)
 					time.Sleep(sleepTime)
 					sleepTime *= 2
 					if sleepTime > netd.ACCEPT_MAX_SLEEP {
@@ -489,66 +478,66 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 
 			connection, err := c.newFromConn(context, conn, info)
 			if err != nil {
-				config.Log.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%a] : Failed Create *Connection", conn.RemoteAddr().String())
+				config.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%a] : Failed Create *Connection", conn.RemoteAddr().String())
 				continue
 			}
 
 			if isCluster {
 				if err := c.newClusterConn(context, connection); err != nil {
-					config.Log.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%a] : Failed Create *Connection", conn.RemoteAddr().String())
+					config.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%a] : Failed Create *Connection", conn.RemoteAddr().String())
 					continue
 				}
 			}
 
 			if err := c.newClientConn(context, connection); err != nil {
-				config.Log.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%a] : Failed Create *Connection", conn.RemoteAddr().String())
+				config.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%a] : Failed Create *Connection", conn.RemoteAddr().String())
 				continue
 			}
 
 		}
 	}
 
-	c.config.Log.Log(context, "tcp.listenerLoop", "Completed")
+	c.config.Log(context, "tcp.listenerLoop", "Completed")
 }
 
 func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) error {
 	config := c.config
 
-	config.Log.Log(context, "tcp.newClusterConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClusterConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
 
 	provider, err := c.clusterHandler(context, connection)
 	if err != nil {
-		config.Log.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Failed Provider Creation", connection.RemoteAddr().String())
+		config.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Failed Provider Creation", connection.RemoteAddr().String())
 		connection.SetReadDeadline(time.Time{})
 		connection.Close()
 	}
-	config.Log.Log(context, "tcp.newClusterConn", "Provider Created for Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClusterConn", "Provider Created for Addr[%+s] ", connection.RemoteAddr().String())
 
-	config.Log.Log(context, "tcp.newClusterConn", "Provider Authentication Process Initiated for Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClusterConn", "Provider Authentication Process Initiated for Addr[%+s] ", connection.RemoteAddr().String())
 
 	// Check authentication of provider and certify if we are authorized.
 	if config.Authenticate {
-		config.Log.Log(context, "tcp.newClusterConn", "Provider Authentication Process Started for Addr[%+s] ", connection.RemoteAddr().String())
+		config.Log(context, "tcp.newClusterConn", "Provider Authentication Process Started for Addr[%+s] ", connection.RemoteAddr().String())
 
 		providerAuth, ok := provider.(netd.ClientAuth)
 
 		if !ok && c.config.MustAuthenticate {
-			config.Log.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-			provider.SendError(context, errors.New("Error: Provider has no authentication. Authentication needed"), true)
+			config.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
+			provider.SendError(context, true, errors.New("Error: Provider has no authentication. Authentication needed"))
 			provider.Close(context)
 			return errors.New("Provider has no authenticator")
 		}
 
 		if !config.ClusterAuth.Authenticate(providerAuth) {
 			if !config.MatchClusterCredentials(providerAuth.Credentials()) {
-				config.Log.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-				provider.SendError(context, errors.New("Error: Authentication failed"), true)
+				config.Error(context, "tcp.newClusterConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
+				provider.SendError(context, true, errors.New("Error: Authentication failed"))
 				provider.Close(context)
 				return errors.New("Authentication failed")
 			}
 		}
 	} else {
-		config.Log.Log(context, "tcp.newClusterConn", "Provider Needs No Authentication for Addr[%+s] ", connection.RemoteAddr().String())
+		config.Log(context, "tcp.newClusterConn", "Provider Needs No Authentication for Addr[%+s] ", connection.RemoteAddr().String())
 	}
 
 	raddr := connection.RemoteAddr().String()
@@ -556,7 +545,7 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 	// Listen for the end signal and descrease connection wait group.
 	go func() {
 		<-provider.CloseNotify()
-		config.Log.Log(context, "tcp.newClusterConn", "Provider with Addr[%+s] ending connection ", raddr)
+		config.Log(context, "tcp.newClusterConn", "Provider with Addr[%+s] ending connection ", raddr)
 		c.conWG.Done()
 		c.router.Unregister(allSubs, provider)
 		c.clusterEvents.FireDisconnect(provider)
@@ -570,54 +559,54 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 	}
 	c.mc.Unlock()
 
-	config.Log.Log(context, "tcp.newClusterConn", "Provider Ready Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClusterConn", "Provider Ready Addr[%+s] ", connection.RemoteAddr().String())
 	c.clusterEvents.FireConnect(provider)
 	return nil
 }
 
 func (c *TCPConn) newClientConn(context interface{}, connection *Connection) error {
 	config := c.config
-	config.Log.Log(context, "tcp.newClientConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClientConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
 
 	provider, err := c.clientHandler(context, connection)
 	if err != nil {
-		config.Log.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Failed Provider Creation", connection.RemoteAddr().String())
+		config.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Failed Provider Creation", connection.RemoteAddr().String())
 		connection.SetReadDeadline(time.Time{})
 		connection.Close()
 	}
-	config.Log.Log(context, "tcp.newClientConn", "Provider Created for Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClientConn", "Provider Created for Addr[%+s] ", connection.RemoteAddr().String())
 
-	config.Log.Log(context, "tcp.newClientConn", "Provider Authentication Process Initiated for Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClientConn", "Provider Authentication Process Initiated for Addr[%+s] ", connection.RemoteAddr().String())
 
 	// Check authentication of provider and certify if we are authorized.
 	if config.Authenticate {
-		config.Log.Log(context, "tcp.newClientConn", "Provider Authentication Process Started for Addr[%+s] ", connection.RemoteAddr().String())
+		config.Log(context, "tcp.newClientConn", "Provider Authentication Process Started for Addr[%+s] ", connection.RemoteAddr().String())
 		providerAuth, ok := provider.(netd.ClientAuth)
 		if !ok && c.config.MustAuthenticate {
-			config.Log.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-			provider.SendError(context, errors.New("Error: Provider has no authentication. Authentication needed"), true)
+			config.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
+			provider.SendError(context, true, errors.New("Error: Provider has no authentication. Authentication needed"))
 			provider.Close(context)
 			return errors.New("Provider has no authenticator")
 		}
 
 		if !config.ClientAuth.Authenticate(providerAuth) {
 			if !config.MatchClientCredentials(providerAuth.Credentials()) {
-				config.Log.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
-				provider.SendError(context, errors.New("Error: Authentication failed"), true)
+				config.Error(context, "tcp.newClientConn", err, "New Connection : Addr[%a] : Provider does not match ClientAuth interface", connection.RemoteAddr().String())
+				provider.SendError(context, true, errors.New("Error: Authentication failed"))
 				provider.Close(context)
 				return errors.New("Authentication failed")
 			}
 
 		}
 	} else {
-		config.Log.Log(context, "tcp.newClientConn", "Provider Needs No Authentication for Addr[%+s] ", connection.RemoteAddr().String())
+		config.Log(context, "tcp.newClientConn", "Provider Needs No Authentication for Addr[%+s] ", connection.RemoteAddr().String())
 	}
 
 	// Listen for the end signal and descrease connection wait group.
 	raddr := connection.RemoteAddr().String()
 	go func() {
 		<-provider.CloseNotify()
-		config.Log.Log(context, "tcp.newClientConn", "Provider with Addr[%+s] ending connection ", raddr)
+		config.Log(context, "tcp.newClientConn", "Provider with Addr[%+s] ending connection ", raddr)
 		c.conWG.Done()
 		c.clientEvents.FireDisconnect(provider)
 	}()
@@ -629,13 +618,13 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 	}
 	c.mc.Unlock()
 
-	config.Log.Log(context, "tcp.newClientConn", "Provider Ready Addr[%+s] ", connection.RemoteAddr().String())
+	config.Log(context, "tcp.newClientConn", "Provider Ready Addr[%+s] ", connection.RemoteAddr().String())
 	c.clientEvents.FireConnect(provider)
 	return nil
 }
 
 func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.BaseInfo) (*Connection, error) {
-	c.config.Log.Log(context, "NewConn", "New Connection : Addr[%a]", conn.RemoteAddr().String())
+	c.config.Log(context, "NewConn", "New Connection : Addr[%a]", conn.RemoteAddr().String())
 
 	var stat netd.StatProvider
 
@@ -667,7 +656,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.Base
 		var tlsPassed bool
 
 		time.AfterFunc(ttl, func() {
-			config.Log.Log(context, "NewConn", "Connection TLS Handshake Timeout : Status[%s] : Addr[%a]", tlsPassed, conn.RemoteAddr().String())
+			config.Log(context, "NewConn", "Connection TLS Handshake Timeout : Status[%s] : Addr[%a]", tlsPassed, conn.RemoteAddr().String())
 
 			// Once the time has elapsed, close the connection and nil out.
 			if !tlsPassed {
@@ -679,7 +668,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.Base
 		tlsConn.SetReadDeadline(time.Now().Add(ttl))
 
 		if err := tlsConn.Handshake(); err != nil {
-			config.Log.Error(context, "NewConn", err, "New Connection : Addr[%a] : Failed Handshake", conn.RemoteAddr().String())
+			config.Error(context, "NewConn", err, "New Connection : Addr[%a] : Failed Handshake", conn.RemoteAddr().String())
 			tlsConn.SetReadDeadline(time.Time{})
 			tlsConn.Close()
 			return nil, err
