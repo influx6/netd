@@ -29,15 +29,15 @@ type MessageParser interface {
 	Parse([]byte) ([]Message, error)
 }
 
+// Messages defines a slice of Message structs.
+type Messages []Message
+
 // Message defines a struct that details a specific message piece of a data
 // recieved.
 type Message struct {
 	Command []byte   `json:"command"`
 	Data    [][]byte `json:"data"`
 }
-
-// Messages defines a slice of Message structs.
-type Messages []Message
 
 /* BlockParser defines a package level parser using the blockMessage specification.
  The block message specification is based on the idea of a simple text based
@@ -258,6 +258,10 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 
 // WrapBlock wraps a message in a opening and closing bracket.
 func WrapBlock(msg []byte) []byte {
+	if bytes.HasPrefix(msg, beginBracketSlice) && bytes.HasSuffix(msg, endBracketSlice) {
+		return msg
+	}
+
 	return bytes.Join([][]byte{[]byte("{"), msg, []byte("}")}, emptyString)
 }
 
@@ -283,12 +287,32 @@ func WrapResponses(header []byte, msgs ...[][]byte) []byte {
 		if len(header) == 0 {
 			mod = WrapWithHeader(header, WrapBlockParts(blocks))
 		} else {
-			WrapBlockParts(blocks)
+			mod = WrapBlockParts(blocks)
 		}
 
 		responses = append(
 			responses,
 			WrapBlock(mod),
+		)
+	}
+
+	return bytes.Join(responses, colonSlice)
+}
+
+// WrapResponse wraps each byte slice in the multiple byte slice with with
+// given header returning a single byte slice joined with a colon : symbol.
+func WrapResponse(header []byte, msgs ...[]byte) []byte {
+	var responses [][]byte
+
+	for _, block := range msgs {
+
+		if len(header) == 0 {
+			block = WrapWithHeader(header, block)
+		}
+
+		responses = append(
+			responses,
+			WrapBlock(block),
 		)
 	}
 

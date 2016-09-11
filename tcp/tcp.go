@@ -578,8 +578,8 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 		connection.SetReadDeadline(time.Time{})
 		connection.Close()
 	}
-	config.Log(context, "tcp.newClientConn", "Provider Created for Addr[%+s] ", connection.RemoteAddr().String())
 
+	config.Log(context, "tcp.newClientConn", "Provider Created for Addr[%+s] ", connection.RemoteAddr().String())
 	config.Log(context, "tcp.newClientConn", "Provider Authentication Process Initiated for Addr[%+s] ", connection.RemoteAddr().String())
 
 	// Check authentication of provider and certify if we are authorized.

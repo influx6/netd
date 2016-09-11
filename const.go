@@ -96,6 +96,14 @@ var (
 	// RespMessage snififies the header used to singal response messages.
 	RespMessage = []byte("+RESP")
 
+	// ErrInvalidRequest signify the error sent when an invalid request was
+	// received.
+	ErrInvalidRequest = errors.New("Received Invalid Request")
+
+	// ErrInvalidResponse signify the error sent when an invalid response was
+	// received.
+	ErrInvalidResponse = errors.New("Received Invalid Response")
+
 	// ErrNoResponse signify the error sent when no response was recieved within
 	// defined limits.
 	ErrNoResponse = errors.New("Failed to recieve response")

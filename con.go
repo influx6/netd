@@ -48,8 +48,8 @@ type Provider interface {
 type Messager interface {
 	SendMessage(context interface{}, msg []byte, flush bool) error
 	SendError(context interface{}, flush bool, msg ...error) error
-	Send(context interface{}, flush bool, msg ...[][]byte) error
-	SendResponse(context interface{}, flush bool, msg ...[][]byte) error
+	Send(context interface{}, flush bool, msg ...[]byte) error
+	SendResponse(context interface{}, flush bool, msg ...[]byte) error
 }
 
 // Connection defines a baselevel struct for storing connection details
@@ -70,7 +70,13 @@ type Connection struct {
 // processinging of requests and its response to a provider.
 type RequestResponse interface {
 	HandleEvents(context interface{}, c ConnectionEvents) error
-	Process(context interface{}, cx *Connection, msgs ...Message) error
+	Process(context interface{}, cx *Connection, msgs ...Message) (bool, error)
+}
+
+// Middlware defines a interface for processing a single Message block.
+type Middleware interface {
+	HandleEvents(context interface{}, c ConnectionEvents) error
+	Handle(context interface{}, m Message, cx *Connection) ([]byte, bool, error)
 }
 
 // Router defines a interface for a route provider which registers subscriptions

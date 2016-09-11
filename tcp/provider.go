@@ -141,8 +141,8 @@ func (bp *TCPProvider) Fire(context interface{}, params map[string]string, paylo
 
 // Send sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
-func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[][]byte) error {
-	response := netd.WrapResponses(nil, msg...)
+func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[]byte) error {
+	response := netd.WrapResponse(nil, msg...)
 	return bp.SendMessage(context, response, doFlush)
 }
 
@@ -150,8 +150,8 @@ func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[][]byte) 
 
 // SendResponse sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
-func (bp *TCPProvider) SendResponse(context interface{}, doFlush bool, msg ...[][]byte) error {
-	response := netd.WrapResponses(netd.RespMessage, msg...)
+func (bp *TCPProvider) SendResponse(context interface{}, doFlush bool, msg ...[]byte) error {
+	response := netd.WrapResponse(netd.RespMessage, msg...)
 	return bp.SendMessage(context, response, doFlush)
 }
 
@@ -248,7 +248,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 		return errors.New("Provider underline connection closed")
 	}
 
-	if err := rl.Send(context, true, [][]byte{netd.ConnectMessage}); err != nil {
+	if err := rl.Send(context, true, netd.ConnectMessage); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -311,7 +311,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 
 	rl.MyInfo = realInfo
 
-	if err := rl.SendResponse(context, true, [][]byte{netd.OkMessage}); err != nil {
+	if err := rl.SendResponse(context, true, netd.OkMessage); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -325,6 +325,8 @@ func (rl *TCPProvider) readLoop() {
 	rl.Config.Log(context, "ReadLoop", "Started : Provider Provider for Connection{%+s}  read loop", rl.addr)
 
 	var isCluster bool
+	var sid string
+	var cid string
 	var cx netd.Connection
 
 	rl.lock.Lock()
@@ -332,6 +334,9 @@ func (rl *TCPProvider) readLoop() {
 
 		// cache the netd.ClusterMessage status of the provider.
 		isCluster = rl.isCluster
+
+		sid = rl.ServerInfo.ServerID
+		cid = rl.MyInfo.ClientID
 
 		// initialize the connection fields with the needed information for
 		// information processors.
@@ -386,8 +391,15 @@ func (rl *TCPProvider) readLoop() {
 				break loopRunner
 			}
 
-			if err := rl.handler.Process(context, &cx, messages...); err != nil {
+			doClose, err := rl.handler.Process(context, &cx, messages...)
+			if err != nil {
 				rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+			}
+
+			// If we are expected to kill the connection after this error then
+			// end the loop and close connection.
+			if doClose {
+				rl.Config.Log(context, "readLoop", "Server[%q] : Client[%q] : Request to end client readloop", sid, cid)
 				go rl.Close(context)
 				break loopRunner
 			}
