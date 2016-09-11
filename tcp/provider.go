@@ -11,41 +11,18 @@ import (
 	"time"
 
 	"github.com/influx6/netd"
-	"github.com/influx6/netd/parser"
 )
 
 var (
-	ctrl        = "\r\n"
+	ctrl     = "\r\n"
+	ctrlLine = []byte(ctrl)
+	newLine  = []byte("\n")
+
 	allSubs     = []byte("*")
-	ctrlLine    = []byte(ctrl)
 	lineBreak   = []byte("|")
 	spaceString = []byte(" ")
 	emptyString = []byte("")
-	newLine     = []byte("\n")
 	endTrace    = []byte("End Trace")
-
-	// message types for different responses
-	errMessage  = []byte("+ERR")
-	respMessage = []byte("+RESP")
-
-	// request message types
-	sub         = []byte("SUB")
-	info        = []byte("INFO")
-	subs        = []byte("SUBS")
-	okMessage   = []byte("OK")
-	unsub       = []byte("UNSUB")
-	cluster     = []byte("CLUSTER")
-	pingMessage = []byte("PING")
-	pongMessage = []byte("P0NG")
-	connect     = []byte("CONNECT")
-	msgEnd      = []byte("MSG_END")
-	msgBegin    = []byte("MSG_PAYLOAD")
-
-	noResponse          = errors.New("Failed to recieve response")
-	invalidInfoResponse = errors.New("Failed to unmarshal info data")
-	negotationFailed    = errors.New("Failed to negotiate with new cluster")
-	expectedInfoFailed  = errors.New("Failed to receive info response for connect")
-	invalidClusterInfo  = errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
 )
 
 // TCPProvider creates a base provider structure for use in writing handlers
@@ -62,7 +39,7 @@ type TCPProvider struct {
 	waiter       sync.WaitGroup
 	providedInfo *netd.BaseInfo
 	handler      netd.RequestResponse
-	parser       parser.MessageParser
+	parser       netd.MessageParser
 
 	addr string
 
@@ -73,7 +50,7 @@ type TCPProvider struct {
 }
 
 // NewTCPProvider returns a new instance of a TCPProvider.
-func NewTCPProvider(isCluster bool, parser parser.MessageParser, handler netd.RequestResponse, conn *Connection) *TCPProvider {
+func NewTCPProvider(isCluster bool, parser netd.MessageParser, handler netd.RequestResponse, conn *Connection) *TCPProvider {
 	var bp TCPProvider
 	bp.Connection = conn
 	bp.isCluster = isCluster
@@ -174,27 +151,23 @@ func (bp *TCPProvider) Fire(context interface{}, params map[string]string, paylo
 
 //==============================================================================
 
-// SendResponse sends a giving response to the connection. This is used for mainly responding to
+// Send sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
-func (bp *TCPProvider) SendRequest(context interface{}, doFlush bool, msg ...[][]byte) error {
-	response := parser.WrapResponses(nil, msg...)
+func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[][]byte) error {
+	response := netd.WrapResponses(nil, msg...)
 	return bp.SendMessage(context, response, doFlush)
 }
 
 //==============================================================================
-
-var respHeader = []byte("+RESP")
 
 // SendResponse sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
 func (bp *TCPProvider) SendResponse(context interface{}, doFlush bool, msg ...[][]byte) error {
-	response := parser.WrapResponses(respHeader, msg...)
+	response := netd.WrapResponses(netd.RespMessage, msg...)
 	return bp.SendMessage(context, response, doFlush)
 }
 
 //==============================================================================
-
-var errorHeader = []byte("+ERR")
 
 // SendError sends a giving error response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
@@ -208,7 +181,7 @@ func (bp *TCPProvider) SendError(context interface{}, doFlush bool, msg ...error
 		errs = append(errs, [][]byte{errbs})
 	}
 
-	if err := bp.SendMessage(context, parser.WrapResponses(errorHeader, errs...), doFlush); err != nil {
+	if err := bp.SendMessage(context, netd.WrapResponses(netd.ErrMessage, errs...), doFlush); err != nil {
 		bp.Config.Error(context, "SendResponse", err, "Completed")
 		return err
 	}
@@ -287,7 +260,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 		return errors.New("Provider underline connection closed")
 	}
 
-	if err := rl.SendRequest(context, true, [][]byte{connect}); err != nil {
+	if err := rl.Send(context, true, [][]byte{netd.ConnectMessage}); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -312,7 +285,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 	}
 
 	if len(messages) == 0 {
-		if err := rl.SendError(context, true, noResponse); err != nil {
+		if err := rl.SendError(context, true, netd.ErrNoResponse); err != nil {
 			rl.Config.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
@@ -323,13 +296,13 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 	}
 
 	infoMessage := messages[0]
-	if !bytes.Equal(infoMessage.Command, respMessage) {
-		if err := rl.SendError(context, true, expectedInfoFailed); err != nil {
+	if !bytes.Equal(infoMessage.Command, netd.RespMessage) {
+		if err := rl.SendError(context, true, netd.ErrExpectedInfo); err != nil {
 			rl.Config.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
 
-		err := errors.New("Invalid connect response received")
+		err := errors.New("Invalid netd.ConnectMessage response received")
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -339,7 +312,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 	var realInfo netd.BaseInfo
 
 	if err := json.Unmarshal(infoData, &realInfo); err != nil {
-		if err := rl.SendError(context, true, invalidInfoResponse); err != nil {
+		if err := rl.SendError(context, true, netd.ErrInvalidInfo); err != nil {
 			rl.Config.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
@@ -350,7 +323,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 
 	rl.MyInfo = realInfo
 
-	if err := rl.SendResponse(context, true, [][]byte{okMessage}); err != nil {
+	if err := rl.SendResponse(context, true, [][]byte{netd.OkMessage}); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -364,14 +337,32 @@ func (rl *TCPProvider) readLoop() {
 	rl.Config.Log(context, "ReadLoop", "Started : Provider Provider for Connection{%+s}  read loop", rl.addr)
 
 	var isCluster bool
+	var cx netd.Connection
 
 	rl.lock.Lock()
-	isCluster = rl.isCluster
+	{
+
+		// cache the netd.ClusterMessage status of the provider.
+		isCluster = rl.isCluster
+
+		// initialize the connection fields with the needed information for
+		// information processors.
+		cx.Clusters = rl
+		cx.Messager = rl
+		cx.Base = rl.MyInfo
+		cx.Server = rl.ServerInfo
+		cx.Connections = rl.Connections
+		cx.Router = rl.Router
+		cx.Parser = rl.parser
+
+		// Initialize the handler for connection events.
+		rl.handler.HandleEvents(context, rl.Events)
+	}
 	rl.lock.Unlock()
 
 	if isCluster && rl.ServerInfo.ConnectInitiator {
 		if err := rl.negotiateCluster(context); err != nil {
-			rl.SendError(context, true, fmt.Errorf("Error negotiating with  cluster: %s", err.Error()))
+			rl.SendError(context, true, fmt.Errorf("Error negotiating with  netd.ClusterMessage: %s", err.Error()))
 			rl.waiter.Done()
 			rl.Close(context)
 			return
@@ -394,15 +385,20 @@ func (rl *TCPProvider) readLoop() {
 				break loopRunner
 			}
 
-			var trace [][]byte
-			trace = append(trace, []byte("--TRACE Started ------------------------------\n"))
-			trace = append(trace, []byte(fmt.Sprintf("Connection %s\n", rl.addr)))
-			trace = append(trace, []byte(fmt.Sprintf("%q", block[:n])))
-			trace = append(trace, []byte("\n"))
-			trace = append(trace, []byte("--TRACE Finished --------------------------\n"))
-			rl.Config.Trace.Trace(context, bytes.Join(trace, emptyString))
+			rl.Config.Trace.Begin(context, []byte("TCPProvider.readloop"))
+			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("Connection %s\n", rl.addr)))
+			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%q\n", block[:n])))
+			rl.Config.Trace.End(context, []byte("TCPProvider.readloop"))
 
-			if err := rl.handler.Process(context, block[:n], rl, rl.Router); err != nil {
+			// Parse current block of data.
+			messages, err := rl.parser.Parse(block[:n])
+			if err != nil {
+				rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+				go rl.Close(context)
+				break loopRunner
+			}
+
+			if err := rl.handler.Process(context, &cx, messages...); err != nil {
 				rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
 				go rl.Close(context)
 				break loopRunner

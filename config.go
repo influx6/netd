@@ -152,6 +152,7 @@ type BaseInfo struct {
 	Addr             string `json:"addr"`
 	Port             int    `json:"port"`
 	ServerID         string `json:"server_id"`
+	ClientID         string `json:"server_id"`
 	Version          string `json:"version"`
 	GoVersion        string `json:"go-version"`
 	IP               string `json:"ip,emitempty"`

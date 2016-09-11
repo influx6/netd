@@ -1,10 +1,10 @@
-package parser_test
+package netd_test
 
 import (
 	"fmt"
 	"testing"
 
-	parser "github.com/influx6/netd/parser"
+	parser "github.com/influx6/netd"
 )
 
 // succeedMark is the Unicode codepoint for a check mark.

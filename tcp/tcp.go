@@ -19,20 +19,21 @@ import (
 // provided net.Conn for usage.
 type Connections interface {
 	netd.Connections
-	NewCluster(context interface{}, c net.Conn) error
-	NewClusterFromAddr(context interface{}, addr string, port int) error
+	netd.ClusterConnect
+
+	NewClusterFrom(context interface{}, c net.Conn) error
 }
 
 // Connection defines a struct which stores the incoming request for a
 // connection.
 type Connection struct {
 	net.Conn
+	Connections
+
 	Router     netd.Router
 	Config     netd.Config
 	ServerInfo netd.BaseInfo
 	MyInfo     netd.BaseInfo
-
-	Connections Connections
 
 	Stat   netd.StatProvider
 	Events netd.ConnectionEvents
@@ -371,7 +372,7 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	return nil
 }
 
-func (c *TCPConn) NewClusterFromAddr(context interface{}, addr string, port int) error {
+func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 	c.config.Log(context, "tcp.NewConnFrom", "Started : Creating net.Conn   [%s: %d]", addr, port)
 
 	c.mc.Lock()
@@ -409,10 +410,10 @@ func (c *TCPConn) NewClusterFromAddr(context interface{}, addr string, port int)
 	}
 
 	c.config.Log(context, "tcp.NewConnFrom", "Completed")
-	return c.NewCluster(context, conn)
+	return c.NewClusterFrom(context, conn)
 }
 
-func (c *TCPConn) NewCluster(context interface{}, conn net.Conn) error {
+func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 	c.config.Log(context, "tcp.NewConn", "Started : For[%s]", conn.RemoteAddr().String())
 
 	ip, port, _ := net.SplitHostPort(c.clusterAddr)
@@ -643,6 +644,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.Base
 	connInfo.GoVersion = runtime.Version()
 	connInfo.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	connInfo.ServerID = uuid.New()
+	connInfo.ClientID = uuid.New()
 	connInfo.Version = netd.VERSION
 
 	var connection Connection

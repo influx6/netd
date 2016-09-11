@@ -1,13 +1,13 @@
 package netd
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const (
-	// CRTLine defines the control line value which must end all packets.
-	CRTLLine = "\r\n"
-
-	// CRTLineLen caches the length of a control line.
-	CRTLLineLen = len(CRTLLine)
+	// CTRL defines the ending control line which must end all messages.
+	CTRL = "\r\n"
 
 	// VERSION is the current version for the server.
 	VERSION = "0.0.1"
@@ -72,8 +72,45 @@ const (
 )
 
 var (
-	emptyString = []byte("")
-	endTrace    = []byte("End Trace")
-	ctrlLine    = []byte(CRTLLine)
-	newLine     = []byte("\n")
+	// CTRLine defines the byte slice form of the CTRL character.
+	CTRLINE = []byte(CTRL)
+
+	// NewLine defines the byte slice for the newline character.
+	NewLine = []byte("\n")
+
+	// InfoMessage defines the info header for request connection info.
+	InfoMessage = []byte("INFO")
+
+	// OkMessage defines the header used for signifying response success.
+	OkMessage = []byte("OK")
+
+	// ClusterMessage defines the header used for signifying a new cluster.
+	ClusterMessage = []byte("CLUSTER")
+
+	// ConnectMessage defines the header sent by a new cluster.
+	ConnectMessage = []byte("CONNECT")
+
+	// ErrMessage signifies the header used to signal error messages.
+	ErrMessage = []byte("+ERR")
+
+	// RespMessage snififies the header used to singal response messages.
+	RespMessage = []byte("+RESP")
+
+	// ErrNoResponse signify the error sent when no response was recieved within
+	// defined limits.
+	ErrNoResponse = errors.New("Failed to recieve response")
+
+	// ErrInvalidInfo defines the error sent when info data was invalid json.
+	ErrInvalidInfo = errors.New("Failed to unmarshal info data")
+
+	// ErrNegotationFailed defines the error sent during a failed cluster negotiation.
+	ErrNegotiationFailed = errors.New("Failed to negotiate with new cluster")
+
+	// ErrExpectedInfo defines the error sent when info was not received during
+	// a info response.
+	ErrExpectedInfo = errors.New("Failed to receive info response for connect")
+
+	// ErrInvalidClusterFormat defines the error sent when a invalid cluster request
+	// is made.
+	ErrInvalidClusterFormat = errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
 )

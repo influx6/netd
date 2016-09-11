@@ -2,44 +2,10 @@ package netd
 
 import "sync"
 
-// Messages defines an interface which exposes methods for sending messages down
-// a connection pipeline.
-type Messages interface {
-	SendMessage(context interface{}, msg []byte, flush bool) error
-	SendError(context interface{}, flush bool, msg ...error) error
-	SendRequest(context interface{}, flush bool, msg ...[][]byte) error
-	SendResponse(context interface{}, flush bool, msg ...[][]byte) error
-}
-
-// RequestResponse defines an interface for a provider which handles the
-// processinging of requests and its response to a provider.
-type RequestResponse interface {
-	Process(context interface{}, msg []byte, m Messages, r Router) error
-}
-
-// Provider defines a interface for a connection handler, which ensures
-// to manage the request-response cycle of a provided net.Conn.
-type Provider interface {
-	Messages
-	Subscriber
-	BaseInfo() BaseInfo
-	CloseNotify() chan struct{}
-	Close(context interface{}) error
-}
-
-// Subscriber defines an interface for routes to be fired upon when matched.
-type Subscriber interface {
-	Fire(context interface{}, params map[string]string, payload interface{}) error
-}
-
-// Router defines a interface for a route provider which registers subscriptions
-// for specific paths.
-type Router interface {
-	Routes() [][]byte
-	RoutesFor(sub Subscriber) ([][]byte, error)
-	Register(path []byte, sub Subscriber) error
-	Unregister(path []byte, sub Subscriber) error
-	Handle(context interface{}, path []byte, payload interface{})
+// ClusterConnect defines a interface for handling the cluster connection
+// procedure.
+type ClusterConnect interface {
+	NewCluster(context interface{}, addr string, port int) error
 }
 
 // Connections defines an interface for sending messages to two classes of
@@ -60,6 +26,61 @@ type ConnectionEvents interface {
 	OnDisconnect(fn func(Provider))
 	FireConnect(Provider)
 	FireDisconnect(Provider)
+}
+
+// Subscriber defines an interface for routes to be fired upon when matched.
+type Subscriber interface {
+	Fire(context interface{}, params map[string]string, payload interface{}) error
+}
+
+// Provider defines a interface for a connection handler, which ensures
+// to manage the request-response cycle of a provided net.Conn.
+type Provider interface {
+	Messager
+	Subscriber
+	BaseInfo() BaseInfo
+	CloseNotify() chan struct{}
+	Close(context interface{}) error
+}
+
+// Messager defines an interface which exposes methods for sending messages down
+// a connection pipeline.
+type Messager interface {
+	SendMessage(context interface{}, msg []byte, flush bool) error
+	SendError(context interface{}, flush bool, msg ...error) error
+	Send(context interface{}, flush bool, msg ...[][]byte) error
+	SendResponse(context interface{}, flush bool, msg ...[][]byte) error
+}
+
+// Connection defines a baselevel struct for storing connection details
+// which provided processors the ability to utilitize the underline connections.
+type Connection struct {
+	Connections
+	Messager
+
+	Base     BaseInfo
+	Server   BaseInfo
+	Router   Router
+	Stat     StatProvider
+	Parser   MessageParser
+	Clusters ClusterConnect
+}
+
+// RequestResponse defines an interface for a provider which handles the
+// processinging of requests and its response to a provider.
+type RequestResponse interface {
+	HandleEvents(context interface{}, c ConnectionEvents) error
+	Process(context interface{}, cx *Connection, msgs ...Message) error
+}
+
+// Router defines a interface for a route provider which registers subscriptions
+// for specific paths.
+type Router interface {
+	Routes() [][]byte
+	RoutesFor(sub Subscriber) ([][]byte, error)
+	Register(path []byte, sub Subscriber) error
+	Unregister(path []byte, sub Subscriber) error
+	Handle(context interface{}, path []byte, payload interface{})
 }
 
 // NewBaseEvent returns a new instance of a base event.
