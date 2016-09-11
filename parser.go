@@ -63,6 +63,10 @@ type blockMessage struct{}
 // Parse parses the data data coming in and produces a series of Messages
 // based on a base pattern.
 func (b blockMessage) Parse(msg []byte) ([]Message, error) {
+	if len(msg) == 0 {
+		return nil, errors.New("Empty Data Received")
+	}
+
 	var messages []Message
 
 	blocks, err := b.SplitMultiplex(msg)
@@ -306,7 +310,7 @@ func WrapResponse(header []byte, msgs ...[]byte) []byte {
 
 	for _, block := range msgs {
 
-		if len(header) == 0 {
+		if header != nil {
 			block = WrapWithHeader(header, block)
 		}
 

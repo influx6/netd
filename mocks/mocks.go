@@ -42,7 +42,7 @@ func NewTracer(in io.Writer) *Tracer {
 
 // Begin begins the trace call for the giving message.
 func (t *Tracer) Begin(context interface{}, msg []byte) {
-	t.b.Write([]byte(fmt.Sprintf("\n--TRACE [%+q] Begin------------------------------\n", msg)))
+	t.b.Write([]byte(fmt.Sprintf("--TRACE [%+q] Begin------------------------------\n", msg)))
 }
 
 // Trace logs the trace call for the giving message.
@@ -54,7 +54,7 @@ func (t *Tracer) Trace(context interface{}, msg []byte) {
 // End ends the trace call for the giving message and clears the internal buffer, writing the trace
 // into the internal writer.
 func (t *Tracer) End(context interface{}, msg []byte) {
-	t.b.Write([]byte(fmt.Sprintf("\n--TRACE [%+q] Ended------------------------------\n", msg)))
+	t.b.Write([]byte(fmt.Sprintf("--TRACE [%+q] Ended------------------------------\n", msg)))
 	t.in.Write(t.b.Bytes())
 	t.b.Reset()
 }

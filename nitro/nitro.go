@@ -128,7 +128,7 @@ func (n *Nitro) HandleCluster(context interface{}, data [][]byte, cx *netd.Conne
 	}
 
 	n.Log(context, "Nitro.HandleCluster", "Completed")
-	return netd.WrapResponse(netd.RespMessage, netd.OkMessage), false, nil
+	return netd.OkMessage, false, nil
 }
 
 func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message netd.Message) ([]byte, bool, error) {
@@ -139,12 +139,18 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 		return n.HandleInfo(context, cx)
 	case bytes.Equal(message.Command, netd.ClusterMessage):
 		return n.HandleCluster(context, message.Data, cx)
+	case bytes.Equal(message.Command, netd.OkMessage):
+		return nil, false, nil
+	case bytes.Equal(message.Command, netd.RespMessage):
+		return nil, false, nil
+	case bytes.Equal(message.Command, netd.ErrMessage):
+		return nil, false, nil
 	default:
 		if n.Next != nil {
 			return n.Next.Handle(context, message, cx)
 		}
 
-		return nil, true, netd.ErrInvalidRequest
+		return nil, false, netd.ErrInvalidRequest
 	}
 }
 
@@ -172,6 +178,10 @@ func (n *Nitro) Process(context interface{}, cx *netd.Connection, messages ...ne
 
 			checkErr = true
 			break
+		}
+
+		if res == nil {
+			continue
 		}
 
 		responses = append(responses, res)

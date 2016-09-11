@@ -142,8 +142,21 @@ func (bp *TCPProvider) Fire(context interface{}, params map[string]string, paylo
 // Send sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
 func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[]byte) error {
+	bp.Config.Log(context, "Send", "Started : Connection[%+s]", bp.addr)
+
+	if len(msg) == 0 {
+		bp.Config.Log(context, "Send", "Completed")
+		return nil
+	}
+
 	response := netd.WrapResponse(nil, msg...)
-	return bp.SendMessage(context, response, doFlush)
+	if err := bp.SendMessage(context, response, doFlush); err != nil {
+		bp.Config.Error(context, "Send", err, "Completed")
+		return err
+	}
+
+	bp.Config.Log(context, "Send", "Completed")
+	return nil
 }
 
 //==============================================================================
@@ -151,25 +164,16 @@ func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[]byte) er
 // SendResponse sends a giving response to the connection. This is used for mainly responding to
 // requests recieved through the pipeline.
 func (bp *TCPProvider) SendResponse(context interface{}, doFlush bool, msg ...[]byte) error {
-	response := netd.WrapResponse(netd.RespMessage, msg...)
-	return bp.SendMessage(context, response, doFlush)
-}
-
-//==============================================================================
-
-// SendError sends a giving error response to the connection. This is used for mainly responding to
-// requests recieved through the pipeline.
-func (bp *TCPProvider) SendError(context interface{}, doFlush bool, msg ...error) error {
 	bp.Config.Log(context, "SendResponse", "Started : Connection[%+s]", bp.addr)
 
-	var errs [][][]byte
-
-	for _, err := range msg {
-		errbs := []byte(err.Error())
-		errs = append(errs, [][]byte{errbs})
+	if len(msg) == 0 {
+		bp.Config.Log(context, "SendResponse", "Completed")
+		return nil
 	}
 
-	if err := bp.SendMessage(context, netd.WrapResponses(netd.ErrMessage, errs...), doFlush); err != nil {
+	response := netd.WrapResponse(netd.RespMessage, msg...)
+
+	if err := bp.SendMessage(context, response, doFlush); err != nil {
 		bp.Config.Error(context, "SendResponse", err, "Completed")
 		return err
 	}
@@ -180,10 +184,42 @@ func (bp *TCPProvider) SendError(context interface{}, doFlush bool, msg ...error
 
 //==============================================================================
 
+// SendError sends a giving error response to the connection. This is used for mainly responding to
+// requests recieved through the pipeline.
+func (bp *TCPProvider) SendError(context interface{}, doFlush bool, msg ...error) error {
+	bp.Config.Log(context, "SendError", "Started : Connection[%+s]", bp.addr)
+
+	if len(msg) == 0 {
+		bp.Config.Log(context, "SendError", "Completed")
+		return nil
+	}
+
+	var errs [][]byte
+
+	for _, err := range msg {
+		errs = append(errs, []byte(err.Error()))
+	}
+
+	if err := bp.SendMessage(context, netd.WrapResponse(netd.ErrMessage, errs...), doFlush); err != nil {
+		bp.Config.Error(context, "SendError", err, "Completed")
+		return err
+	}
+
+	bp.Config.Log(context, "SendError", "Completed")
+	return nil
+}
+
+//==============================================================================
+
 // SendMessage sends a message into the provider connection. This exists for
 // the outside which wishes to call a write into the connection.
 func (bp *TCPProvider) SendMessage(context interface{}, msg []byte, doFlush bool) error {
 	bp.Config.Log(context, "SendMessage", "Started : Connection[%+s] : Data[%q] :  Flush[%t]", bp.addr, msg, doFlush)
+
+	if len(msg) == 0 {
+		bp.Config.Log(context, "SendMessage", "Completed")
+		return nil
+	}
 
 	if len(msg) > netd.MAX_PAYLOAD_SIZE {
 		err := fmt.Errorf("Data is above allowed payload size of %d", netd.MAX_PAYLOAD_SIZE)
@@ -311,7 +347,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 
 	rl.MyInfo = realInfo
 
-	if err := rl.SendResponse(context, true, netd.OkMessage); err != nil {
+	if err := rl.Send(context, true, netd.OkMessage); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -379,8 +415,8 @@ func (rl *TCPProvider) readLoop() {
 			}
 
 			rl.Config.Trace.Begin(context, []byte("TCPProvider.readloop"))
-			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("Connection %s\n", rl.addr)))
-			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%q\n", block[:n])))
+			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("Connection %s", rl.addr)))
+			rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%q", block[:n])))
 			rl.Config.Trace.End(context, []byte("TCPProvider.readloop"))
 
 			// Parse current block of data.
