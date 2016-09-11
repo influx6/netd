@@ -148,23 +148,24 @@ func (c *TCPConn) SendToClusters(context interface{}, msg []byte, flush bool) er
 
 		var b [][]byte
 		b = append(b, []byte("Trace: SendToClients"))
-		b = append(b, newLine)
+		b = append(b, netd.NewLine)
 		b = append(b, []byte("Cluster: "))
 		b = append(b, []byte(c.infoTCP.String()))
-		b = append(b, newLine)
+		b = append(b, netd.NewLine)
 		b = append(b, []byte("ToCluster: "))
 		b = append(b, []byte(cluster.BaseInfo().String()))
-		b = append(b, newLine)
+		b = append(b, netd.NewLine)
 		b = append(b, []byte("Data: "))
 		b = append(b, msg)
-		b = append(b, newLine)
-		c.config.Trace.Trace(context, bytes.Join(b, emptyString))
+		b = append(b, netd.NewLine)
+
+		c.config.Trace.Begin(context, []byte("SendToClusters"))
+		c.config.Trace.Trace(context, bytes.Join(b, []byte("")))
+		c.config.Trace.End(context, []byte("SendToClusters"))
 
 		if err := cluster.SendMessage(context, msg, flush); err != nil {
 			c.config.Error(context, "SendToCluster", err, "Failed to deliver to cluster : Cluster[%s]", cluster.BaseInfo().String())
 		}
-
-		c.config.Trace.Trace(context, endTrace)
 	}
 
 	c.config.Log(context, "SendToCluster", "Completed")
@@ -182,23 +183,23 @@ func (c *TCPConn) SendToClients(context interface{}, msg []byte, flush bool) err
 
 		var b [][]byte
 		b = append(b, []byte("Trace: SendToClients"))
-		b = append(b, newLine)
+		b = append(b, netd.NewLine)
 		b = append(b, []byte("Cluster: "))
 		b = append(b, []byte(c.infoTCP.String()))
-		b = append(b, newLine)
+		b = append(b, netd.NewLine)
 		b = append(b, []byte("ToClient: "))
 		b = append(b, []byte(client.BaseInfo().String()))
-		b = append(b, newLine)
+		b = append(b, netd.NewLine)
 		b = append(b, []byte("Data: "))
 		b = append(b, msg)
-		b = append(b, newLine)
-		c.config.Trace.Trace(context, bytes.Join(b, emptyString))
+		b = append(b, netd.NewLine)
+		c.config.Trace.Begin(context, []byte("SendToClient"))
+		c.config.Trace.Trace(context, bytes.Join(b, []byte("")))
+		c.config.Trace.End(context, []byte("SendToClient"))
 
 		if err := client.SendMessage(context, msg, flush); err != nil {
 			c.config.Error(context, "SendToClient", err, "Failed to deliver to client : ClientInfo[%s]", client.BaseInfo().String())
 		}
-
-		c.config.Trace.Trace(context, endTrace)
 	}
 
 	c.config.Log(context, "SendToClient", "Completed")
@@ -500,6 +501,8 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 
 	c.config.Log(context, "tcp.listenerLoop", "Completed")
 }
+
+var allSubs = []byte("*")
 
 func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) error {
 	config := c.config

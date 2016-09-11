@@ -13,18 +13,6 @@ import (
 	"github.com/influx6/netd"
 )
 
-var (
-	ctrl     = "\r\n"
-	ctrlLine = []byte(ctrl)
-	newLine  = []byte("\n")
-
-	allSubs     = []byte("*")
-	lineBreak   = []byte("|")
-	spaceString = []byte(" ")
-	emptyString = []byte("")
-	endTrace    = []byte("End Trace")
-)
-
 // TCPProvider creates a base provider structure for use in writing handlers
 // for connections.
 // When using TCPProvider, it exposes access to a internal mutex, buffered writer
@@ -203,8 +191,8 @@ func (bp *TCPProvider) SendMessage(context interface{}, msg []byte, doFlush bool
 		return err
 	}
 
-	if !bytes.HasSuffix(msg, ctrlLine) {
-		msg = append(msg, ctrlLine...)
+	if !bytes.HasSuffix(msg, netd.CTRLINE) {
+		msg = append(msg, netd.CTRLINE...)
 	}
 
 	var err error
@@ -307,7 +295,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 		return err
 	}
 
-	infoData := bytes.Join(infoMessage.Data, emptyString)
+	infoData := bytes.Join(infoMessage.Data, []byte(""))
 
 	var realInfo netd.BaseInfo
 
@@ -415,12 +403,4 @@ func (rl *TCPProvider) readLoop() {
 	}
 
 	rl.Config.Log(context, "ReadLoop", "Completed  :  Connection{%+s}", rl.addr)
-}
-
-func toJSON(data interface{}) ([]byte, error) {
-	return json.Marshal(data)
-}
-
-func stripCTRL(msg []byte) []byte {
-	return bytes.TrimSuffix(msg, ctrlLine)
 }

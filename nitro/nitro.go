@@ -43,7 +43,7 @@ type NitroBase struct {
 // Process implements the netd.RequestResponse.Process method which process all
 // incoming messages.
 func (n *NitroBase) Process(context interface{}, cx *netd.Connection, messages ...netd.Messages) error {
-  n.Log(context, "NitroBase.Process", "Started : From{Client: %q, Server: %q} : Messages", cx.Base.ClientID, cx.Server.ServerID)
+  n.Log(context, "NitroBase.Process", "Started : From{Client: %q, Server: %q} : Messages {%d} : {%#v}", cx.Base.ClientID, cx.Server.ServerID, len(messages), messages)
 
   for _, message := range messages{
       cmd := message.Command
@@ -89,10 +89,13 @@ func (n *NitroBase) Process(context interface{}, cx *netd.Connection, messages .
 
          return rl.SendResponse(context, okMessage, true)
        default:
-        if err := n.Next.Process(context, , cx)
+        if err := n.Next.Process(context, cx, message); err != nil {
+          return err 
+        }
       }
     }
 
+    return nil
 }
 
 
@@ -114,7 +117,7 @@ func (n *Nitro) HandleEvents(context interface{}, cx netd.ConnectionEvents) erro
 // Process implements the netd.RequestResponse.Process method which process all
 // incoming messages.
 func (n *Nitro) Process(context interface{}, cx *netd.Connection, messages ...netd.Messages) error {
-	n.Log(context, "Nitro.Process", "Started : From{Client: %q, Server: %q} : New Messages {%+q}", cx.Base.ClientID, cx.Server.ServerID, messages)
+  n.Log(context, "Nitro.Process", "Started : From{Client: %q, Server: %q} : Messages {%d} : {%#v}", cx.Base.ClientID, cx.Server.ServerID, len(messages), messages)
 
 	var responses [][][]byte
 
