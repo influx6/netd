@@ -28,9 +28,18 @@ type ConnectionEvents interface {
 	FireDisconnect(Provider)
 }
 
+// SubMessage defines the structure returned to a subscriber once a publish matching
+// its criteria is found.
+type SubMessage struct {
+	Topic   []byte
+	Match   []byte
+	Params  map[string]string
+	Payload interface{}
+}
+
 // Subscriber defines an interface for routes to be fired upon when matched.
 type Subscriber interface {
-	Fire(context interface{}, params map[string]string, payload interface{}) error
+	Fire(context interface{}, sm *SubMessage) error
 }
 
 // Provider defines a interface for a connection handler, which ensures
@@ -56,6 +65,7 @@ type Messager interface {
 // which provided processors the ability to utilitize the underline connections.
 type Connection struct {
 	Connections
+	Subscriber
 	Messager
 
 	Base     BaseInfo
@@ -70,6 +80,7 @@ type Connection struct {
 // processinging of requests and its response to a provider.
 type RequestResponse interface {
 	HandleEvents(context interface{}, c ConnectionEvents) error
+	HandleFire(context interface{}, msg *SubMessage) ([]byte, error)
 	Process(context interface{}, cx *Connection, msgs ...Message) (bool, error)
 }
 

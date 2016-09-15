@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 
 	"github.com/influx6/netd"
@@ -46,11 +47,13 @@ var (
 	sub         = []byte("SUB")
 	subs        = []byte("SUBS")
 	unsub       = []byte("UNSUB")
+	pub         = []byte("PUB")
 	pingMessage = []byte("PING")
 	pongMessage = []byte("P0NG")
 	connect     = []byte("CONNECT")
-	msgEnd      = []byte("MSG_END")
-	msgBegin    = []byte("MSG_PAYLOAD")
+	msgEnd      = []byte("MSGED")
+	msgBegin    = []byte("MSGBG")
+	payload     = []byte("PAYLOAD")
 )
 
 // Nitro implements a netd.RequestResponse interface, providing methods to handle
@@ -131,6 +134,96 @@ func (n *Nitro) HandleCluster(context interface{}, data [][]byte, cx *netd.Conne
 	return netd.OkMessage, false, nil
 }
 
+// HandleUnsubscribe handles all subscription to different topics.
+/* We expect topics to be in the forms of the following:
+
+   '*' or '/' => to capture all topics in all level
+   'alarm.red' => to capture the 'red' sub topic of the 'alarm' topic.
+   'alarm.ish^' => to capture topics published which lies under the 'alarm' topic and has a subtopic ending with 'ish'
+   'alarm.^ish' => to capture topics published which lies under the 'alarm' topic and has a subtopic beginning with 'ish'
+   'alarm.{color:[.+]}' => to capture topics under 'alarm', which matches the regexp in bracket and is aliased by the 'color' name.
+   'alarm.ish*' => to capture topics published which lies under the 'alarm' topic and contains 'ish'
+   'alarm.*ish' => to capture topics published which lies under the 'alarm' topic and contains 'ish'
+
+*/
+func (n *Nitro) HandleSubscribe(context interface{}, subs [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleSubscribe", "Started : Subscribing to [%+q]", subs)
+
+	for _, sub := range subs {
+		if err := cx.Router.Register(sub, cx.Subscriber); err != nil {
+			n.Error(context, "Nitro.HandleSubscribe", err, "Completed")
+			return nil, false, err
+		}
+	}
+
+	n.Log(context, "Nitro.HandleSubscribe", "Completed")
+}
+
+// HandleUnsubscribe handles all unsubscription to different topics.
+/* We expect topics to be in the forms of the following:
+
+   '*' or '/' => to be removed from the capture all topics in all level
+   'alarm.red' => to be removed from the capture 'red' sub topic of the 'alarm' topic.
+   'alarm.ish^' => to be removed from the capture topics published which lies under the 'alarm' topic and has a subtopic ending with 'ish'
+   'alarm.^ish' => to be removed from the capture topics published which lies under the 'alarm' topic and has a subtopic beginning with 'ish'
+   'alarm.{color:[.+]}' => to be removed from the capture topics under 'alarm', which matches the regexp in bracket and is aliased by the 'color' name.
+   'alarm.ish*' => to be removed from the capture topics published which lies under the 'alarm' topic and contains 'ish'
+   'alarm.*ish' => to be removed from the capture topics published which lies under the 'alarm' topic and contains 'ish'
+
+*/
+func (n *Nitro) HandleUnsubscribe(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleUnsubscribe", "Started : Subscribing to [%+q]", subs)
+
+	for _, sub := range subs {
+		if err := cx.Router.Unregister(sub, cx.Subscriber); err != nil {
+			n.Error(context, "Nitro.HandleUnsubscribe", err, "Completed")
+			return nil, false, err
+		}
+	}
+
+	n.Log(context, "Nitro.HandleUnsubscribe", "Completed")
+}
+
+// HandleFire handles response to be sent when a route fires off with the providers
+// fire method. This returns the expected response.
+func (n *Nitro) HandleFire(context interface{}, params map[string]string, payload interface{}) ([]byte, error) {
+	n.Log(context, "Nitro.HandleFire", "Started")
+
+	var bu bytes.Buffer
+
+	switch payload.(type) {
+	case io.Reader:
+		reader := payload.(io.Reader)
+		if _, err := io.Copy(&bu, reader); err != nil {
+			n.Error(context, "Nitro.HandleFire", err, "Completed")
+			return nil, err
+		}
+	case bytes.Buffer:
+		bu = payload.(bytes.Buffer)
+	case *bytes.Buffer:
+		bu = *(payload.(*bytes.Buffer))
+	case []byte:
+		bu.Write(payload.([]byte))
+	default:
+		if err := json.NewEncoder(&bu).Encode(payload); err != nil {
+			n.Error(context, "Nitro.HandleFire", err, "Completed")
+			return nil, err
+		}
+	}
+
+	n.Log(context, "Nitro.HandleFire", "Completed")
+	return bu.Bytes(), nil
+}
+
+// HandleUnsubscribe handles all publish for different topics.
+func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+
+}
+
+// HandleMessage handles the call for the different available message handlers
+// for different behaviours of the Nitro Packet parser. Delegating each message
+// to the appropriate method else passing it to its next available middleware if
+// set.
 func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message netd.Message) ([]byte, bool, error) {
 	switch {
 	case bytes.Equal(message.Command, netd.ConnectMessage):

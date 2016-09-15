@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
 	"time"
 
@@ -110,31 +109,22 @@ func (bp *TCPProvider) IsRunning() bool {
 }
 
 // Fire sends the provided payload into the provided write stream.
-func (bp *TCPProvider) Fire(context interface{}, params map[string]string, payload interface{}) error {
-	bp.Config.Log(context, "Fire", "Started : Connection[%+s] : Paral[%#v] :  Payload[%#v]", bp.addr, params, payload)
+func (bp *TCPProvider) Fire(context interface{}, msg *netd.SubMessage) error {
+	bp.Config.Log(context, "Fire", "Started : Connection[%+s] : Message[%#v]", bp.addr, msg)
 
-	var bu bytes.Buffer
+	bu, err := bp.handler.HandleFire(context, msg)
+	if err != nil {
+		bp.Config.Error(context, "Fire", err, "Completed")
+		return err
+	}
 
-	switch payload.(type) {
-	case io.Reader:
-		reader := payload.(io.Reader)
-		if _, err := io.Copy(&bu, reader); err != nil {
-			return err
-		}
-	case bytes.Buffer:
-		bu = payload.(bytes.Buffer)
-	case *bytes.Buffer:
-		bu = *(payload.(*bytes.Buffer))
-	case []byte:
-		bu.Write(payload.([]byte))
-	default:
-		if err := json.NewEncoder(&bu).Encode(payload); err != nil {
-			return err
-		}
+	if err := bp.SendMessage(context, bu, true); err != nil {
+		bp.Config.Error(context, "Fire", err, "Completed")
+		return err
 	}
 
 	bp.Config.Log(context, "Fire", "Completed")
-	return bp.SendMessage(context, bu.Bytes(), true)
+	return nil
 }
 
 //==============================================================================
@@ -378,6 +368,7 @@ func (rl *TCPProvider) readLoop() {
 		// information processors.
 		cx.Clusters = rl
 		cx.Messager = rl
+		cx.Subscriber = rl
 		cx.Base = rl.MyInfo
 		cx.Server = rl.ServerInfo
 		cx.Connections = rl.Connections

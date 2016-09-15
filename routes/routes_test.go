@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/influx6/netd"
 	"github.com/influx6/netd/routes"
 )
 
@@ -40,32 +41,32 @@ func (c *counter) Match(bit int) bool {
 
 type redbell struct{ c *counter }
 
-func (r *redbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
-	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Red bell just rang\n", context, params, payload)
+func (r *redbell) Fire(context interface{}, msg *netd.SubMessage) error {
+	fmt.Printf("Context[%#v] : Payload[%+q] : Red bell just rang\n", context, msg)
 	r.c.Done()
 	return nil
 }
 
 type redblackbell struct{ c *counter }
 
-func (r *redblackbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
-	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : RedBlack bell just rang\n", context, params, payload)
+func (r *redblackbell) Fire(context interface{}, msg *netd.SubMessage) error {
+	fmt.Printf("Context[%#v] : Payload[%+q] : RedBlack bell just rang\n", context, msg)
 	r.c.Done()
 	return nil
 }
 
 type blackbell struct{ c *counter }
 
-func (b *blackbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
-	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Black bell just rang\n", context, params, payload)
+func (b *blackbell) Fire(context interface{}, msg *netd.SubMessage) error {
+	fmt.Printf("Context[%#v] : Payload[%+q] : Black bell just rang\n", context, msg)
 	b.c.Done()
 	return nil
 }
 
 type rootbell struct{ c *counter }
 
-func (r *rootbell) Fire(context interface{}, params map[string]string, payload interface{}) error {
-	fmt.Printf("Context[%#v] : Params[%#v] : Payload[%#v] : Root bell just rang\n", context, params, payload)
+func (r *rootbell) Fire(context interface{}, msg *netd.SubMessage) error {
+	fmt.Printf("Context[%#v] : Payload[%+q] : Root bell just rang\n", context, msg)
 	r.c.Done()
 	return nil
 }

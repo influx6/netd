@@ -91,7 +91,13 @@ func (s *Subscription) Routes() [][]byte {
 // Handle calls the giving path slice, if found and applies the payload else
 // returns an error.
 func (s *Subscription) Handle(context interface{}, path []byte, payload interface{}) {
-	s.root.Resolve(context, path, payload)
+	msg := netd.SubMessage{
+		Topic:   path,
+		Payload: payload,
+		Params:  map[string]string{},
+	}
+
+	s.root.Resolve(context, path, &msg)
 }
 
 // Register adds the new giving path slice into the subscription for routing.
@@ -220,7 +226,7 @@ type node struct {
 	matcher func([]byte) bool
 }
 
-func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, params map[string]string, payload interface{}) error {
+func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, msg *netd.SubMessage) error {
 	tLen := len(tokens)
 
 	if tLen == 0 {
@@ -240,12 +246,14 @@ func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, param
 	}
 
 	if !bytes.Equal(token, containsSlice) {
-		params[string(n.ns)] = string(token)
+		msg.Params[string(n.ns)] = string(token)
 	}
+
+	msg.Match = bytes.Join([][]byte{msg.Match, n.sid}, sublistSlice)
 
 	for _, sub := range n.subs {
 		recovers(context, func() {
-			if err := sub.Fire(context, params, payload); err != nil {
+			if err := sub.Fire(context, msg); err != nil {
 				if tracer != nil {
 					tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", n.sid, err.Error())))
 				}
@@ -255,11 +263,11 @@ func (n *node) resolve(context interface{}, tracer Trace, tokens [][]byte, param
 
 	if n.next != nil {
 		if bytes.Equal(token, containsSlice) && len(tokens) == 0 {
-			n.next.resolve(context, containsArraySlice, params, payload)
+			n.next.resolve(context, containsArraySlice, msg)
 			return nil
 		}
 
-		n.next.resolve(context, tokens, params, payload)
+		n.next.resolve(context, tokens, msg)
 	}
 
 	return nil
@@ -294,7 +302,8 @@ func (s *level) Size() int {
 }
 
 // Resolve checks if the giving path is a match within the giving level's routes.
-func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}) {
+func (s *level) Resolve(context interface{}, pattern []byte, msg *netd.SubMessage) {
+
 	pLen := len(pattern)
 
 	s.rw.RLock()
@@ -308,14 +317,12 @@ func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}
 		}
 	}
 
-	params := make(map[string]string)
-
 	if pLen == 1 && pattern[0] == contains {
 		s.rw.RLock()
 		{
 			for _, sub := range s.all.subs {
 				recovers(context, func() {
-					if err := sub.Fire(context, params, payload); err != nil {
+					if err := sub.Fire(context, msg); err != nil {
 						if tracer != nil {
 							tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", pattern, err.Error())))
 						}
@@ -335,10 +342,10 @@ func (s *level) Resolve(context interface{}, pattern []byte, payload interface{}
 		return
 	}
 
-	s.resolve(context, tokens, params, payload)
+	s.resolve(context, tokens, msg)
 }
 
-func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]string, payload interface{}) {
+func (s *level) resolve(context interface{}, tokens [][]byte, msg *netd.SubMessage) {
 	s.rw.RLock()
 	tracer := s.tracer
 	s.rw.RUnlock()
@@ -347,7 +354,7 @@ func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]
 	{
 		for _, sub := range s.all.subs {
 			recovers(context, func() {
-				if err := sub.Fire(context, params, payload); err != nil {
+				if err := sub.Fire(context, msg); err != nil {
 					if tracer != nil {
 						tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", tokens, err.Error())))
 					}
@@ -360,7 +367,7 @@ func (s *level) resolve(context interface{}, tokens [][]byte, params map[string]
 	s.rw.RLock()
 	{
 		for _, node := range s.nodes {
-			if err := node.resolve(context, tracer, tokens, params, payload); err != nil && tracer != nil {
+			if err := node.resolve(context, tracer, tokens, msg); err != nil && tracer != nil {
 				tracer.Trace(context, []byte(fmt.Sprintf("Error routing %+s: %+s", tokens, err.Error())))
 			}
 		}
