@@ -152,9 +152,9 @@ type BaseInfo struct {
 	Addr             string `json:"addr"`
 	Port             int    `json:"port"`
 	ServerID         string `json:"server_id"`
-	ClientID         string `json:"server_id"`
+	ClientID         string `json:"client_id"`
 	Version          string `json:"version"`
-	GoVersion        string `json:"go-version"`
+	GoVersion        string `json:"go_version"`
 	IP               string `json:"ip,emitempty"`
 	MaxPayload       int    `json:"max_payload"`
 	ConnectInitiator bool   `json:"-"`

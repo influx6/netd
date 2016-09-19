@@ -84,6 +84,15 @@ var (
 	// OkMessage defines the header used for signifying response success.
 	OkMessage = []byte("OK")
 
+	// EndMessage defines the header send to indicate message end.
+	EndMessage = []byte("+MSGED")
+
+	// DataMessage defines the header send to indicate a published event/data.
+	DataMessage = []byte("+DATA")
+
+	// BeginMessage defines the header send to indicate message begin.
+	BeginMessage = []byte("+MSGBG")
+
 	// ClusterMessage defines the header used for signifying a new cluster.
 	ClusterMessage = []byte("CLUSTER")
 

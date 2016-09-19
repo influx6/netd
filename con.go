@@ -15,8 +15,8 @@ type ClusterConnect interface {
 type Connections interface {
 	Clients(context interface{}) SearchableInfo
 	Clusters(context interface{}) SearchableInfo
-	SendToClients(context interface{}, msg []byte, flush bool) error
-	SendToClusters(context interface{}, msg []byte, flush bool) error
+	SendToClients(context interface{}, id string, msg []byte, flush bool) error
+	SendToClusters(context interface{}, id string, msg []byte, flush bool) error
 }
 
 // ConnectionEvents defines a interface which defines a connection event
@@ -35,6 +35,7 @@ type SubMessage struct {
 	Match   []byte
 	Params  map[string]string
 	Payload interface{}
+	Source  interface{}
 }
 
 // Subscriber defines an interface for routes to be fired upon when matched.
@@ -97,7 +98,7 @@ type Router interface {
 	RoutesFor(sub Subscriber) ([][]byte, error)
 	Register(path []byte, sub Subscriber) error
 	Unregister(path []byte, sub Subscriber) error
-	Handle(context interface{}, path []byte, payload interface{})
+	Handle(context interface{}, path []byte, payload interface{}, source interface{})
 }
 
 // NewBaseEvent returns a new instance of a base event.

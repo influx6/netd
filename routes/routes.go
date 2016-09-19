@@ -90,11 +90,12 @@ func (s *Subscription) Routes() [][]byte {
 
 // Handle calls the giving path slice, if found and applies the payload else
 // returns an error.
-func (s *Subscription) Handle(context interface{}, path []byte, payload interface{}) {
+func (s *Subscription) Handle(context interface{}, path []byte, payload interface{}, source interface{}) {
 	msg := netd.SubMessage{
 		Topic:   path,
 		Payload: payload,
 		Params:  map[string]string{},
+		Source:  source,
 	}
 
 	s.root.Resolve(context, path, &msg)

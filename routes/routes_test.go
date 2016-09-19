@@ -102,7 +102,7 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully returned 4 items in the route list")
 
 	path := routes.PathToByte("/")
-	alarm.Handle(context, path, "RootaBalls")
+	alarm.Handle(context, path, "RootaBalls", nil)
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %s", c)
@@ -116,7 +116,7 @@ func TestStrictRoutes(t *testing.T) {
 	}
 	logPassed(t, "Should have successfully increased counter to 1: %s", c)
 	path = routes.PathToByte("/alarm/red")
-	alarm.Handle(context, path, "Balls")
+	alarm.Handle(context, path, "Balls", nil)
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %s", c)
@@ -130,7 +130,7 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully increaseed counter to 1: %s", c)
 
 	path = routes.PathToByte("/alarm/redish/black")
-	alarm.Handle(context, path, "Balls")
+	alarm.Handle(context, path, "Balls", nil)
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %s", c)
@@ -144,7 +144,7 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully increase counter to 1: %d", c)
 
 	path = routes.PathToByte("/alarm/black")
-	alarm.Handle(context, path, "Balls")
+	alarm.Handle(context, path, "Balls", nil)
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %d", c)
@@ -161,7 +161,7 @@ func TestStrictRoutes(t *testing.T) {
 	logPassed(t, "Should have successfully increase counter to 3: %d", c)
 
 	path = routes.PathToByte("*")
-	alarm.Handle(context, path, "Balls")
+	alarm.Handle(context, path, "Balls", nil)
 
 	if !c.Match(0) {
 		fatalFailed(t, "Should have successfully reduce counter to 0: %d", c)
