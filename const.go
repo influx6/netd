@@ -96,6 +96,9 @@ var (
 	// ClusterMessage defines the header used for signifying a new cluster.
 	ClusterMessage = []byte("CLUSTER")
 
+	// ClusterRoute defines the router clusters are added to for receiving data broadcasts.
+	ClusterRoute = []byte("_clusters")
+
 	// ConnectMessage defines the header sent by a new cluster.
 	ConnectMessage = []byte("CONNECT")
 

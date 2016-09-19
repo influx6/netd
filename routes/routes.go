@@ -318,21 +318,22 @@ func (s *level) Resolve(context interface{}, pattern []byte, msg *netd.SubMessag
 		}
 	}
 
-	if pLen == 1 && pattern[0] == contains {
-		s.rw.RLock()
-		{
-			for _, sub := range s.all.subs {
-				recovers(context, func() {
-					if err := sub.Fire(context, msg); err != nil {
-						if tracer != nil {
-							tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", pattern, err.Error())))
-						}
-					}
-				}, tracer)
-			}
-		}
-		s.rw.RUnlock()
-	}
+	// if pLen == 1 && pattern[0] == contains {
+	// 	s.rw.RLock()
+	// 	{
+	// 		for _, sub := range s.all.subs {
+	// 			recovers(context, func() {
+	// 				if err := sub.Fire(context, msg); err != nil {
+	// 					if tracer != nil {
+	// 						tracer.Trace(context, []byte(fmt.Sprintf("Error firing for route %+s: %+s", pattern, err.Error())))
+	// 					}
+	// 				}
+	// 			}, tracer)
+	// 		}
+	// 	}
+	// 	s.rw.RUnlock()
+	// 	return
+	// }
 
 	tokens, err := splitResolveToken(pattern)
 	if err != nil {
