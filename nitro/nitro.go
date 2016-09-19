@@ -96,7 +96,18 @@ func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connecti
 			continue
 		}
 
-		cx.Router.Handle(context, message.Topic, message.Payload, source)
+		var sourceInfo netd.BaseInfo
+		sourceInfo.Port = int(source["port"].(float64))
+		sourceInfo.MaxPayload = int(source["max_payload"].(float64))
+		sourceInfo.Addr = source["addr"].(string)
+		sourceInfo.IP = source["ip"].(string)
+		sourceInfo.Version = source["version"].(string)
+		sourceInfo.GoVersion = source["go_version"].(string)
+		sourceInfo.ServerID = source["server_id"].(string)
+		sourceInfo.ClientID = source["client_id"].(string)
+		// sourceInfo.ClusterNode = source["cluster_node"].(bool)
+
+		cx.Router.Handle(context, message.Topic, message.Payload, sourceInfo)
 	}
 
 	n.Log(context, "Nitro.HandleData", "Completed")
@@ -105,37 +116,39 @@ func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connecti
 
 // HandleUnsubscribe handles all publish for different topics.
 func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandlePublish", "Started : Data : %+q", data)
+
 	if len(data) < 2 {
-		return nil, true, errors.New("Invalid Data received for publishing")
+		err := errors.New("Invalid Data received for publishing")
+		n.Error(context, "Nitro.HandlePublish", err, "Completed")
+		return nil, true, err
 	}
 
 	route := data[0]
 	head := data[1]
-
-	var msgs [][]byte
-
-	if len(data) > 2 {
-		msgs = data[2:]
-	}
 
 	switch {
 	case bytes.Equal(head, netd.BeginMessage):
 		n.currentRoute = route
 		n.payloadUp()
 	default:
-		cx.Router.Handle(context, route, head, cx.Base)
-		for _, hm := range msgs {
+		for _, hm := range data[1:] {
 			cx.Router.Handle(context, route, hm, cx.Base)
 		}
 	}
 
+	n.Log(context, "Nitro.HandlePublish", "Completed")
 	return netd.OkMessage, false, nil
 }
 
 // HandleMsgBegin handles all distribution of messages to clients.
 func (n *Nitro) HandleMsgBegin(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleMsgBegin", "Started : Data : %+q", data)
+
 	if n.payloadMode() {
-		return nil, true, errors.New("Invalid Connection State, already in payload receive state")
+		err := errors.New("Invalid Connection State, already in payload receive state")
+		n.Error(context, "Nitro.HandleMsgBegin", err, "Completed")
+		return nil, true, err
 	}
 
 	n.payloadUp()
@@ -147,20 +160,27 @@ func (n *Nitro) HandleMsgBegin(context interface{}, data [][]byte, cx *netd.Conn
 		n.payload.Write(da)
 	}
 
+	n.Log(context, "Nitro.HandleMsgBegin", "Completed")
 	return netd.OkMessage, false, nil
 }
 
 // HandleMsgEnd handles all distribution of messages to clients.
 func (n *Nitro) HandleMsgEnd(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleMsgEnd", "Started : Data : %+q", data)
+
 	if !n.payloadMode() {
-		return nil, true, errors.New("Invalid Connection State, not in payload receive state")
+		err := errors.New("Invalid Connection State, not in payload receive state")
+		n.Error(context, "Nitro.HandleMsgEnd", err, "Completed")
+		return nil, true, err
 	}
 
 	if err := cx.Connections.SendToClients(context, string(n.currentMsgr), n.payload.Bytes(), true); err != nil {
+		n.Error(context, "Nitro.HandleMsgEnd", err, "Completed")
 		return nil, true, err
 	}
 
 	if err := cx.Connections.SendToClusters(context, string(n.currentMsgr), n.payload.Bytes(), true); err != nil {
+		n.Error(context, "Nitro.HandleMsgEnd", err, "Completed")
 		return nil, true, err
 	}
 
@@ -168,11 +188,14 @@ func (n *Nitro) HandleMsgEnd(context interface{}, data [][]byte, cx *netd.Connec
 	n.payload.Reset()
 	n.payloadDown()
 
+	n.Log(context, "Nitro.HandleMsgEnd", "Completed")
 	return netd.OkMessage, false, nil
 }
 
 // HandlePayload handles gathering payload data into a complete sequence of data sets.
 func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandlePayload", "Started : Data : %+q", data)
+
 	if len(data) == 0 {
 		return nil, true, errors.New("Empty data received")
 	}
@@ -199,6 +222,7 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 		return nil, false, nil
 	}
 
+	n.Log(context, "Nitro.HandlePayload", "Completed")
 	return netd.OkMessage, false, nil
 }
 
@@ -314,10 +338,14 @@ func (n *Nitro) HandleUnsubscribe(context interface{}, subs [][]byte, cx *netd.C
 // HandleEvents connects to the connection event provider to listening for
 // connects and disconnects.
 func (n *Nitro) HandleEvents(context interface{}, cx netd.ConnectionEvents) error {
+	n.Log(context, "Nitro.HandleEvents", "Started")
+
 	if n.Next != nil {
+		n.Log(context, "Nitro.HandleEvents", "Completed")
 		return n.Next.HandleEvents(context, cx)
 	}
 
+	n.Log(context, "Nitro.HandleEvents", "Completed")
 	return nil
 }
 
@@ -381,7 +409,7 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 // Process implements the netd.RequestResponse.Process method which process all
 // incoming messages.
 func (n *Nitro) Process(context interface{}, cx *netd.Connection, messages ...netd.Message) (bool, error) {
-	n.Log(context, "Nitro.Process", "Started : From{Client: %q, Server: %q} : Messages Size {%d} - {%+q}", cx.Base.ClientID, cx.Server.ServerID, len(messages), messages)
+	n.Log(context, "Nitro.Process", "Started : From{Client: %q, Server: %q} :  Messages {%+q}", cx.Base.ClientID, cx.Server.ServerID, messages)
 
 	var responses [][]byte
 

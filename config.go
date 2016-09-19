@@ -157,6 +157,7 @@ type BaseInfo struct {
 	GoVersion        string `json:"go_version"`
 	IP               string `json:"ip,emitempty"`
 	MaxPayload       int    `json:"max_payload"`
+	ClusterNode      bool   `json:"cluster_node"`
 	ConnectInitiator bool   `json:"-"`
 }
 

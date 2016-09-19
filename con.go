@@ -31,10 +31,12 @@ type ConnectionEvents interface {
 // SubMessage defines the structure returned to a subscriber once a publish matching
 // its criteria is found.
 type SubMessage struct {
+	Msid    []byte
 	Topic   []byte
 	Match   []byte
 	Params  map[string]string
 	Payload interface{}
+	Source  interface{}
 	Source  interface{}
 }
 

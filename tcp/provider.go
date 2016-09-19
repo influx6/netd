@@ -20,13 +20,12 @@ import (
 // use the writer to write and expand its capacity as you see fit.
 type TCPProvider struct {
 	*Connection
-	lock         sync.Mutex
-	writer       *bufio.Writer
-	scratch      bytes.Buffer
-	waiter       sync.WaitGroup
-	providedInfo *netd.BaseInfo
-	handler      netd.RequestResponse
-	parser       netd.MessageParser
+	lock    sync.Mutex
+	writer  *bufio.Writer
+	scratch bytes.Buffer
+	waiter  sync.WaitGroup
+	handler netd.RequestResponse
+	parser  netd.MessageParser
 
 	addr string
 
@@ -111,6 +110,18 @@ func (bp *TCPProvider) IsRunning() bool {
 // Fire sends the provided payload into the provided write stream.
 func (bp *TCPProvider) Fire(context interface{}, msg *netd.SubMessage) error {
 	bp.Config.Log(context, "Fire", "Started : Connection[%+s] : Message[%#v]", bp.addr, msg)
+
+	src, ok := msg.Source.(netd.BaseInfo)
+	if !ok {
+		err := errors.New("Message source should be base info")
+		bp.Config.Error(context, "Fire", err, "Completed")
+		return err
+	}
+
+	if src.ClientID == bp.MyInfo.ClientID {
+		bp.Config.Log(context, "Fire", "Completed")
+		return nil
+	}
 
 	bu, err := bp.handler.HandleFire(context, msg)
 	if err != nil {

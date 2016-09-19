@@ -529,6 +529,8 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 		return err
 	}
 
+	connection.MyInfo.ClusterNode = true
+
 	if err := c.newClusterConn(context, connection); err != nil {
 		c.config.Error(context, "tcp.NewConn", err, "Completed")
 		return err
@@ -594,8 +596,6 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 	c.config.Log(context, "tcp.listenerLoop", "Completed")
 }
 
-var allSubs = []byte("*")
-
 func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) error {
 	config := c.config
 
@@ -643,14 +643,14 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		<-provider.CloseNotify()
 		config.Log(context, "tcp.newClusterConn", "Provider with Addr[%+s] ending connection ", raddr)
 		c.conWG.Done()
-		c.router.Unregister(allSubs, provider)
+		c.router.Unregister(netd.ClusterRoute, provider)
 		c.clusterEvents.FireDisconnect(provider)
 	}()
 
 	c.mc.Lock()
 	{
 		c.conWG.Add(1)
-		c.router.Register(allSubs, provider)
+		c.router.Register(netd.ClusterRoute, provider)
 		c.clusters = append(c.clusters, provider)
 	}
 	c.mc.Unlock()
