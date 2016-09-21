@@ -1,6 +1,9 @@
 package netd
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // ClusterConnect defines a interface for handling the cluster connection
 // procedure.
@@ -36,7 +39,6 @@ type SubMessage struct {
 	Match   []byte
 	Params  map[string]string
 	Payload interface{}
-	Source  interface{}
 	Source  interface{}
 }
 
@@ -148,6 +150,8 @@ func (c *BaseEvents) FireConnect(p Provider) {
 	c.mc.RUnlock()
 }
 
+//==============================================================================
+
 // SearchableInfo defines a BaseInfo slice which allows querying specific data
 // from giving info.
 type SearchableInfo []BaseInfo
@@ -173,10 +177,17 @@ func (s SearchableInfo) GetInfosByIP(ip string) ([]BaseInfo, error) {
 func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 	var info BaseInfo
 
+	var found bool
+
 	for _, info = range s {
 		if info.Addr == addr || info.Port == port {
+			found = true
 			break
 		}
+	}
+
+	if !found {
+		return BaseInfo{}, fmt.Errorf("Addr: %q Port: %d not found in record", addr, port)
 	}
 
 	return info, nil

@@ -52,13 +52,12 @@ type TCPConn struct {
 	runningClient  bool
 	runningCluster bool
 	sid            string
+	clientAddr     string
+	clusterAddr    string
 
 	clientHandler  Handler
 	clusterHandler Handler
 	router         netd.Router
-
-	clientAddr  string
-	clusterAddr string
 
 	closer        chan struct{}
 	config        netd.Config
@@ -407,6 +406,7 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 	info.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	info.GoVersion = runtime.Version()
 	info.ServerID = c.sid
+	info.ClusterNode = true
 
 	c.runningCluster = true
 
@@ -465,14 +465,16 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	return nil
 }
 
+// NewCluster creates a new connnection to a giving cluster addr and port, returning
+// an error if the operation failed.
 func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
-	c.config.Log(context, "tcp.NewConnFrom", "Started : Creating net.Conn   [%s: %d]", addr, port)
+	c.config.Log(context, "tcp.NewCluster", "Started : New Cluster Request : Addr[%s] : Port[%d]", addr, port)
 
 	c.mc.Lock()
 	if !c.runningCluster {
 		c.mc.Unlock()
 		err := errors.New("No clustering currently")
-		c.config.Error(context, "tcp.NewConnFrom", err, "Completed")
+		c.config.Error(context, "tcp.NewCluster", err, "Completed")
 		return err
 	}
 
@@ -491,23 +493,29 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 
 	if addr == ip && port == iport {
 		err := errors.New("Incapable of connecting to self")
-		c.config.Error(context, "tcp.NewConnFrom", err, "Completed")
+		c.config.Error(context, "tcp.NewCluster", err, "Completed")
 		return err
+	}
+
+	clusters := c.Clusters(context)
+	if _, err := clusters.HasAddr(addr, port); err == nil {
+		c.config.Log(context, "tcp.NewCluster", "Completed : Cluster already connected")
+		return nil
 	}
 
 	caddr := net.JoinHostPort(addr, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", caddr, netd.DEFAULT_DIAL_TIMEOUT)
 	if err != nil {
-		c.config.Error(context, "tcp.NewConnFrom", err, "Completed")
+		c.config.Error(context, "tcp.NewCluster", err, "Completed")
 		return err
 	}
 
-	c.config.Log(context, "tcp.NewConnFrom", "Completed")
+	c.config.Log(context, "tcp.NewCluster", "Completed")
 	return c.NewClusterFrom(context, conn)
 }
 
 func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
-	c.config.Log(context, "tcp.NewConn", "Started : For[%s]", conn.RemoteAddr().String())
+	c.config.Log(context, "tcp.NewCusterFrom", "Started : For[%s]", conn.RemoteAddr().String())
 
 	ip, port, _ := net.SplitHostPort(c.clusterAddr)
 	iport, _ := strconv.Atoi(port)
@@ -526,17 +534,18 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 
 	connection, err := c.newFromConn(context, conn, info)
 	if err != nil {
+		c.config.Error(context, "tcp.NewCusterFrom", err, "Completed")
 		return err
 	}
 
 	connection.MyInfo.ClusterNode = true
 
 	if err := c.newClusterConn(context, connection); err != nil {
-		c.config.Error(context, "tcp.NewConn", err, "Completed")
+		c.config.Error(context, "tcp.NewCusterFrom", err, "Completed")
 		return err
 	}
 
-	c.config.Log(context, "tcp.NewConn", "Completed")
+	c.config.Log(context, "tcp.NewCusterFrom", "Completed")
 	return nil
 }
 
@@ -720,7 +729,7 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 }
 
 func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.BaseInfo) (*Connection, error) {
-	c.config.Log(context, "NewConn", "New Connection : Addr[%a]", conn.RemoteAddr().String())
+	c.config.Log(context, "newFromConn", "New Connection : Addr[%s]", conn.RemoteAddr().String())
 
 	var stat netd.StatProvider
 
@@ -731,11 +740,16 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.Base
 	c.mc.Unlock()
 
 	addr, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
+	laddr, lport, _ := net.SplitHostPort(conn.LocalAddr().String())
+
 	iport, _ := strconv.Atoi(port)
+	liport, _ := strconv.Atoi(lport)
 
 	var connInfo netd.BaseInfo
 	connInfo.Addr = addr
 	connInfo.Port = iport
+	connInfo.LocalAddr = laddr
+	connInfo.LocalPort = liport
 	connInfo.GoVersion = runtime.Version()
 	connInfo.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	connInfo.ServerID = uuid.New()
@@ -753,7 +767,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.Base
 		var tlsPassed bool
 
 		time.AfterFunc(ttl, func() {
-			config.Log(context, "NewConn", "Connection TLS Handshake Timeout : Status[%s] : Addr[%a]", tlsPassed, conn.RemoteAddr().String())
+			config.Log(context, "newFromConn", "Connection TLS Handshake Timeout : Status[%s] : Addr[%a]", tlsPassed, conn.RemoteAddr().String())
 
 			// Once the time has elapsed, close the connection and nil out.
 			if !tlsPassed {
@@ -765,7 +779,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, info netd.Base
 		tlsConn.SetReadDeadline(time.Now().Add(ttl))
 
 		if err := tlsConn.Handshake(); err != nil {
-			config.Error(context, "NewConn", err, "New Connection : Addr[%a] : Failed Handshake", conn.RemoteAddr().String())
+			config.Error(context, "newFromConn", err, "New Connection : Addr[%a] : Failed Handshake", conn.RemoteAddr().String())
 			tlsConn.SetReadDeadline(time.Time{})
 			tlsConn.Close()
 			return nil, err

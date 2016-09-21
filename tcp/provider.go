@@ -20,12 +20,14 @@ import (
 // use the writer to write and expand its capacity as you see fit.
 type TCPProvider struct {
 	*Connection
-	lock    sync.Mutex
-	writer  *bufio.Writer
-	scratch bytes.Buffer
-	waiter  sync.WaitGroup
-	handler netd.RequestResponse
-	parser  netd.MessageParser
+	lock           sync.Mutex
+	writer         *bufio.Writer
+	waiter         sync.WaitGroup
+	handler        netd.RequestResponse
+	parser         netd.MessageParser
+	scratchChannel chan struct{}
+	scratchDo      sync.Once
+	scratchPad     netd.Messages // used to store initial messages to be processed on readloop run.
 
 	addr string
 
@@ -33,6 +35,7 @@ type TCPProvider struct {
 	isCluster bool
 	isClosed  bool
 	closer    chan struct{}
+	// internalcx netd.Connection
 }
 
 // NewTCPProvider returns a new instance of a TCPProvider.
@@ -47,6 +50,7 @@ func NewTCPProvider(isCluster bool, parser netd.MessageParser, handler netd.Requ
 	bp.waiter.Add(1)
 	bp.running = true
 	bp.closer = make(chan struct{}, 0)
+	bp.scratchChannel = make(chan struct{}, 0)
 	bp.writer = bufio.NewWriterSize(bp.Conn, netd.MIN_DATA_WRITE_SIZE)
 
 	go bp.readLoop()
@@ -292,32 +296,44 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 
 	block := make([]byte, netd.MIN_DATA_WRITE_SIZE)
 
-	rl.Conn.SetReadDeadline(time.Now().Add(netd.DEFAULT_CLUSTER_NEGOTIATION_TIMEOUT))
+	var err error
+	var blkSize int
+	var messages netd.Messages
 
-	n, err := rl.Conn.Read(block)
-	if err != nil {
-		rl.Conn.SetReadDeadline(time.Time{})
-		rl.Config.Error(context, "negotiateCluster", err, "Completed")
-		return err
-	}
+	// Block handles message collection for negotiation.
+	{
+		rl.Conn.SetReadDeadline(time.Now().Add(netd.DEFAULT_CLUSTER_NEGOTIATION_TIMEOUT))
 
-	rl.Conn.SetReadDeadline(time.Time{})
-
-	messages, err := rl.parser.Parse(block[:n])
-	if err != nil {
-		rl.Config.Error(context, "negotiateCluster", err, "Completed")
-		return err
-	}
-
-	if len(messages) == 0 {
-		if err := rl.SendError(context, true, netd.ErrNoResponse); err != nil {
+		blkSize, err = rl.Conn.Read(block)
+		if err != nil {
+			rl.Conn.SetReadDeadline(time.Time{})
 			rl.Config.Error(context, "negotiateCluster", err, "Completed")
 			return err
 		}
 
-		err := errors.New("Invalid negotation message received")
-		rl.Config.Error(context, "negotiateCluster", err, "Completed")
-		return err
+		rl.Conn.SetReadDeadline(time.Time{})
+
+		rl.Config.Trace.Begin(context, []byte("TCPProvider.negotiateCluster"))
+		rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("Connection %s", rl.addr)))
+		rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%q", block[:blkSize])))
+		rl.Config.Trace.End(context, []byte("TCPProvider.negotiateCluster"))
+
+		messages, err = rl.parser.Parse(block[:blkSize])
+		if err != nil {
+			rl.Config.Error(context, "negotiateCluster", err, "Completed")
+			return err
+		}
+
+		if len(messages) == 0 {
+			if err := rl.SendError(context, true, netd.ErrNoResponse); err != nil {
+				rl.Config.Error(context, "negotiateCluster", err, "Completed")
+				return err
+			}
+
+			err := errors.New("Invalid negotation message received")
+			rl.Config.Error(context, "negotiateCluster", err, "Completed")
+			return err
+		}
 	}
 
 	infoMessage := messages[0]
@@ -348,6 +364,61 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 
 	rl.MyInfo = realInfo
 
+	if err := rl.Send(context, true, netd.ClustersMessage); err != nil {
+		rl.Config.Error(context, "negotiateCluster", err, "Completed")
+		return err
+	}
+
+	// Block handles requesting of cluster connections.
+	{
+		rl.Conn.SetReadDeadline(time.Now().Add(netd.DEFAULT_CLUSTER_NEGOTIATION_TIMEOUT))
+
+		blkSize, err = rl.Conn.Read(block)
+		if err != nil {
+			rl.Conn.SetReadDeadline(time.Time{})
+			rl.Config.Error(context, "negotiateCluster", err, "Completed")
+			return err
+		}
+
+		rl.Conn.SetReadDeadline(time.Time{})
+
+		rl.Config.Trace.Begin(context, []byte("TCPProvider.negotiateCluster"))
+		rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("Connection %s", rl.addr)))
+		rl.Config.Trace.Trace(context, []byte(fmt.Sprintf("%q", block[:blkSize])))
+		rl.Config.Trace.End(context, []byte("TCPProvider.negotiateCluster"))
+
+		messages, err = rl.parser.Parse(block[:blkSize])
+		if err != nil {
+			rl.Config.Error(context, "negotiateCluster", err, "Completed")
+			return err
+		}
+
+		if len(messages) == 0 {
+			if err := rl.SendError(context, true, netd.ErrNoResponse); err != nil {
+				rl.Config.Error(context, "negotiateCluster", err, "Completed")
+				return err
+			}
+
+			err := errors.New("Invalid negotiation message received")
+			rl.Config.Error(context, "negotiateCluster", err, "Completed")
+			return err
+		}
+	}
+
+	clusterMessage := messages[0]
+	if !bytes.Equal(clusterMessage.Command, netd.ClusterMessage) {
+		if err := rl.SendError(context, true, netd.ErrExpectedInfo); err != nil {
+			rl.Config.Error(context, "negotiateCluster", err, "Completed")
+			return err
+		}
+
+		err := errors.New("Invalid cluster response received: Expected cluster connection list")
+		rl.Config.Error(context, "negotiateCluster", err, "Completed")
+		return err
+	}
+
+	rl.scratchPad = append(rl.scratchPad, clusterMessage)
+
 	if err := rl.Send(context, true, netd.OkMessage); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
@@ -357,9 +428,31 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 	return nil
 }
 
+func (rl *TCPProvider) beginScratchProcedure(context interface{}, cx *netd.Connection) {
+	rl.Config.Log(context, "beginScratchProcedure", "Started : Addr[%q]", rl.addr)
+
+	<-rl.scratchChannel
+
+	time.Sleep(1 * time.Millisecond)
+
+	doClose, err := rl.handler.Process(context, cx, rl.scratchPad...)
+	if err != nil {
+		rl.Config.Error(context, "beginScratchProcedure", err, "Completed")
+		rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+		rl.Close(context)
+	}
+
+	if doClose {
+		rl.Close(context)
+	}
+
+	rl.Config.Log(context, "beginScratchProcedure", "Completed")
+}
+
 func (rl *TCPProvider) readLoop() {
 	context := "tcp.TCPProvider"
-	rl.Config.Log(context, "ReadLoop", "Started : Provider Provider for Connection{%+s}  read loop", rl.addr)
+
+	rl.Config.Log(context, "ReadLoop", "Started : ReadLoop for Connection{%+s}", rl.addr)
 
 	var isCluster bool
 	var sid string
@@ -398,6 +491,8 @@ func (rl *TCPProvider) readLoop() {
 			rl.Close(context)
 			return
 		}
+
+		go rl.beginScratchProcedure(context, &cx)
 	}
 
 	rl.lock.Lock()
@@ -409,6 +504,13 @@ func (rl *TCPProvider) readLoop() {
 	{
 	loopRunner:
 		for rl.IsRunning() && !rl.IsClosed() {
+
+			// If the scratchPad is not empty, hence has pending messages to be
+			// process then send signal to pending go-routine listening to the
+			// scratchChannel.
+			if rl.scratchPad != nil {
+				rl.scratchChannel <- struct{}{}
+			}
 
 			n, err := rl.Conn.Read(block)
 			if err != nil {

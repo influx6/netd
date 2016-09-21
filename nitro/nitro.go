@@ -41,6 +41,7 @@ func (nitroHandlers) NewTCPCluster(context interface{}, cx *tcp.Connection) (net
 //==============================================================================
 
 var (
+	colon = []byte(":")
 
 	// request message headers
 	batchd      = []byte("+BATCHD")
@@ -105,7 +106,7 @@ func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connecti
 		sourceInfo.GoVersion = source["go_version"].(string)
 		sourceInfo.ServerID = source["server_id"].(string)
 		sourceInfo.ClientID = source["client_id"].(string)
-		// sourceInfo.ClusterNode = source["cluster_node"].(bool)
+		sourceInfo.ClusterNode = source["cluster_node"].(bool)
 
 		cx.Router.Handle(context, message.Topic, message.Payload, sourceInfo)
 	}
@@ -257,32 +258,65 @@ func (n *Nitro) HandleInfo(context interface{}, cx *netd.Connection) ([]byte, bo
 
 // HandleCluster handles the cluster request, requesting the new cluster provided
 // information be processed.
-func (n *Nitro) HandleCluster(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+func (n *Nitro) HandleCluster(context interface{}, clusters [][]byte, cx *netd.Connection) ([]byte, bool, error) {
 	n.Log(context, "Nitro.HandleCluster", "Started")
 
-	dataLen := len(data)
-	if dataLen != 2 {
-		err := errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
-		n.Error(context, "Nitro.HandleCluster", err, "Completed")
-		return nil, true, err
-	}
+	for _, cluster := range clusters {
+		data := bytes.Split(cluster, colon)
+		if len(data) < 2 {
+			err := errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR:PORT|ADDR:PORT}")
+			n.Error(context, "Nitro.HandleCluster", err, "Completed")
+			return nil, true, err
+		}
 
-	addr := string(data[0])
+		addr := string(data[0])
 
-	port, err := strconv.Atoi(string(data[1]))
-	if err != nil {
-		err = fmt.Errorf("Port is not a int: " + err.Error())
-		n.Error(context, "Nitro.HandleCluster", err, "Completed")
-		return nil, true, err
-	}
+		port, err := strconv.Atoi(string(data[1]))
+		if err != nil {
+			err = fmt.Errorf("Port is not a number: " + err.Error())
+			n.Error(context, "Nitro.HandleCluster", err, "Completed")
+			return nil, true, err
+		}
 
-	if err := cx.Clusters.NewCluster(context, addr, port); err != nil {
-		n.Error(context, "Nitro.HandleCluster", err, "Completed")
-		return nil, true, err
+		if err := cx.Clusters.NewCluster(context, addr, port); err != nil {
+			n.Error(context, "Nitro.HandleCluster", err, "Completed")
+			return nil, true, err
+		}
 	}
 
 	n.Log(context, "Nitro.HandleCluster", "Completed")
 	return netd.OkMessage, false, nil
+}
+
+// HandleClusters handles the requests of known clusters, which details all current
+// available cluster connectins known by the provider.
+func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleClusters", "Started")
+
+	var clusterList [][]byte
+
+	for _, cluster := range cx.Connections.Clusters(context) {
+		if cx.Base.Match(cluster) {
+			fmt.Printf("Found self referencing: %#v : %#v\n", cluster, cx.Base)
+			continue
+		}
+
+		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.Addr, cluster.Port)))
+	}
+
+	n.Log(context, "Nitro.HandleClusters", "Completed")
+	return netd.WrapResponse(netd.ClusterMessage, netd.WrapBlockParts(clusterList)), false, nil
+}
+
+// HandleSubscriptions handles the requests of internal subscriptions list which details all current
+// available subscriptions.
+func (n *Nitro) HandleSubscriptions(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleSubscriptions", "Started")
+
+	routes := cx.Router.Routes()
+
+	n.Log(context, "Nitro.HandleSubscription", "Completed")
+	return netd.WrapResponse(sub, netd.WrapBlockParts(routes)), false, nil
 }
 
 // HandleUnsubscribe handles all subscription to different topics.
@@ -373,30 +407,49 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	switch {
 	case bytes.Equal(message.Command, netd.ConnectMessage):
 		return n.HandleConnect(context, cx)
+
 	case bytes.Equal(message.Command, netd.InfoMessage):
 		return n.HandleInfo(context, cx)
+
+	case bytes.Equal(message.Command, netd.ClustersMessage):
+		return n.HandleClusters(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.ClusterMessage):
 		return n.HandleCluster(context, message.Data, cx)
-	case bytes.Equal(message.Command, pub):
-		return n.HandlePublish(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.BeginMessage):
 		return n.HandleMsgBegin(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.EndMessage):
 		return n.HandleMsgEnd(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.DataMessage):
 		return n.HandleData(context, message.Data, cx)
+
+	case bytes.Equal(message.Command, pub):
+		return n.HandlePublish(context, message.Data, cx)
+
+	case bytes.Equal(message.Command, subs):
+		return n.HandleSubscriptions(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, sub):
 		return n.HandleSubscribe(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, unsub):
 		return n.HandleUnsubscribe(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, payload):
 		return n.HandlePayload(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.OkMessage):
 		return nil, false, nil
+
 	case bytes.Equal(message.Command, netd.RespMessage):
 		return nil, false, nil
+
 	case bytes.Equal(message.Command, netd.ErrMessage):
 		return nil, false, nil
+
 	default:
 		if n.Next != nil {
 			return n.Next.Handle(context, message, cx)

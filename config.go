@@ -151,6 +151,8 @@ func (c *Config) ParseTLS() error {
 type BaseInfo struct {
 	Addr             string `json:"addr"`
 	Port             int    `json:"port"`
+	LocalAddr        string `json:"local_addr"`
+	LocalPort        int    `json:"local_port"`
 	ServerID         string `json:"server_id"`
 	ClientID         string `json:"client_id"`
 	Version          string `json:"version"`
@@ -159,6 +161,25 @@ type BaseInfo struct {
 	MaxPayload       int    `json:"max_payload"`
 	ClusterNode      bool   `json:"cluster_node"`
 	ConnectInitiator bool   `json:"-"`
+}
+
+// Match the provided info with the base info.
+func (b BaseInfo) Match(info BaseInfo) bool {
+	if b.Addr == info.Addr && b.Port == info.Port {
+		return true
+	}
+
+	if b.Addr == info.LocalAddr && b.Port == info.LocalPort {
+		return true
+	}
+
+	if b.LocalAddr != "" && b.LocalPort != 0 {
+		if b.LocalAddr == info.LocalAddr && b.LocalPort == info.LocalPort {
+			return true
+		}
+	}
+
+	return false
 }
 
 // String returns a json parsed version of the BaseInfo.
