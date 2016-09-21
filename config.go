@@ -3,6 +3,7 @@ package netd
 import (
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -165,7 +166,19 @@ type BaseInfo struct {
 
 // Match the provided info with the base info.
 func (b BaseInfo) Match(info BaseInfo) bool {
+	// if b.ServerID == info.ServerID {
+	// 	return true
+	// }
+
 	if b.Addr == info.Addr && b.Port == info.Port {
+		return true
+	}
+
+	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.Port == info.Port {
+		return true
+	}
+
+	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.LocalPort == info.Port {
 		return true
 	}
 
@@ -180,6 +193,16 @@ func (b BaseInfo) Match(info BaseInfo) bool {
 	}
 
 	return false
+}
+
+// ID returns a more terse string relating to the given baseinfo.
+func (b BaseInfo) ID() string {
+	return fmt.Sprintf(`
+  ClientID: %s
+  ServerID: %s
+  Addr: "%s:%d"
+  LocalAddr: "%s:%d"
+`, b.ClientID, b.ServerID, b.Addr, b.Port, b.LocalAddr, b.LocalPort)
 }
 
 // String returns a json parsed version of the BaseInfo.

@@ -25,7 +25,11 @@ type nitroHandlers struct{}
 func (nitroHandlers) NewTCPClient(context interface{}, cx *tcp.Connection) (netd.Provider, error) {
 	return tcp.NewTCPProvider(false,
 		netd.BlockParser,
-		&Nitro{Logger: cx.Config.Logger, Trace: cx.Config.Trace},
+		&Nitro{
+			Logger: cx.Config.Logger,
+			Trace:  cx.Config.Trace,
+			rcs:    make(map[string]bool),
+		},
 		cx), nil
 }
 
@@ -34,7 +38,11 @@ func (nitroHandlers) NewTCPClient(context interface{}, cx *tcp.Connection) (netd
 func (nitroHandlers) NewTCPCluster(context interface{}, cx *tcp.Connection) (netd.Provider, error) {
 	return tcp.NewTCPProvider(true,
 		netd.BlockParser,
-		&Nitro{Logger: cx.Config.Logger, Trace: cx.Config.Trace},
+		&Nitro{
+			Logger: cx.Config.Logger,
+			Trace:  cx.Config.Trace,
+			rcs:    make(map[string]bool),
+		},
 		cx), nil
 }
 
@@ -61,11 +69,14 @@ type Nitro struct {
 	netd.Logger
 	netd.Trace
 
-	Next         netd.Middleware
-	payload      bytes.Buffer
+	Next    netd.Middleware
+	payload bytes.Buffer
+
 	currentRoute []byte
 	currentMsgr  []byte
-	pn           int64
+
+	rcs map[string]bool
+	pn  int64
 }
 
 // HandleData handles the processing of incoming data and sending the response
@@ -293,19 +304,45 @@ func (n *Nitro) HandleCluster(context interface{}, clusters [][]byte, cx *netd.C
 func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
 	n.Log(context, "Nitro.HandleClusters", "Started")
 
+	if len(data) < 1 {
+		err := fmt.Errorf("Expected requester ID")
+		n.Error(context, "Nitro.HandleClusters", err, "Completed")
+		return nil, true, err
+	}
+
+	clientID := data[0]
+	data = data[1:]
+
+	cisd := string(clientID)
+	if n.rcs[cisd] {
+		n.Log(context, "Nitro.HandleClusters", "Info : Already Requsted Clusters : Source[%s]", cisd)
+
+		delete(n.rcs, cisd)
+		n.Log(context, "Nitro.HandleClusters", "Completed")
+		return netd.OkMessage, false, nil
+	}
+
+	n.rcs[cisd] = true
+
 	var clusterList [][]byte
 
-	for _, cluster := range cx.Connections.Clusters(context) {
+	clusters := cx.Connections.Clusters(context)
+	n.Log(context, "Nitro.HandleClusters", "Info : Total Clusters : Source[%s] : %d", cisd, len(clusters))
+
+	for _, cluster := range clusters {
 		if cx.Base.Match(cluster) {
-			fmt.Printf("Found self referencing: %#v : %#v\n", cluster, cx.Base)
+			n.Log(context, "Nitro.HandleClusters", "Info : Found Self Referencing : {%#v}", cluster)
 			continue
 		}
 
 		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.Addr, cluster.Port)))
 	}
 
+	clusterRes := netd.WrapResponse(netd.ClusterMessage, netd.WrapBlockParts(clusterList))
+	clusterReq := netd.WrapResponse(netd.ClustersMessage, []byte(cx.Server.ServerID))
+
 	n.Log(context, "Nitro.HandleClusters", "Completed")
-	return netd.WrapResponse(netd.ClusterMessage, netd.WrapBlockParts(clusterList)), false, nil
+	return netd.WrapResponse(nil, clusterRes, clusterReq), false, nil
 }
 
 // HandleSubscriptions handles the requests of internal subscriptions list which details all current
@@ -462,7 +499,7 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 // Process implements the netd.RequestResponse.Process method which process all
 // incoming messages.
 func (n *Nitro) Process(context interface{}, cx *netd.Connection, messages ...netd.Message) (bool, error) {
-	n.Log(context, "Nitro.Process", "Started : From{Client: %q, Server: %q} :  Messages {%+q}", cx.Base.ClientID, cx.Server.ServerID, messages)
+	n.Log(context, "Nitro.Process", "Started : From{Client: %s, Server: %s} :  Messages {%+q}", cx.Base.ID(), cx.Server.ID(), messages)
 
 	var responses [][]byte
 

@@ -9,6 +9,9 @@ const (
 	// CTRL defines the ending control line which must end all messages.
 	CTRL = "\r\n"
 
+	// SourceFormat defines the source used in delivery message in underline connection.
+	SourceFormat = "SOURCE{%s}"
+
 	// VERSION is the current version for the server.
 	VERSION = "0.0.1"
 

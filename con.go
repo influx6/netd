@@ -55,6 +55,7 @@ type Provider interface {
 	BaseInfo() BaseInfo
 	CloseNotify() chan struct{}
 	Close(context interface{}) error
+	IsClosed() bool
 }
 
 // Messager defines an interface which exposes methods for sending messages down

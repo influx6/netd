@@ -271,12 +271,20 @@ func WrapBlock(msg []byte) []byte {
 
 // WrapParts wraps the provided bytes slices with a | symbol.
 func WrapBlockParts(msg [][]byte) []byte {
+	if len(msg) == 0 {
+		return nil
+	}
+
 	return bytes.Join(msg, lineBreak)
 }
 
 // WrapWithHeader wraps a message with a response wit the given header
 // returning a single byte slice.
 func WrapWithHeader(header []byte, msg []byte) []byte {
+	if len(msg) == 0 {
+		return header
+	}
+
 	return bytes.Join([][]byte{header, msg}, lineBreak)
 }
 

@@ -72,6 +72,7 @@ func (bp *TCPProvider) Close(context interface{}) error {
 	}
 
 	bp.running = false
+
 	bp.lock.Unlock()
 
 	bp.waiter.Wait()
@@ -270,7 +271,7 @@ func (bp *TCPProvider) BaseInfo() netd.BaseInfo {
 	var info netd.BaseInfo
 
 	bp.lock.Lock()
-	info = bp.Connection.MyInfo
+	info = bp.MyInfo
 	bp.lock.Unlock()
 
 	return info
@@ -364,7 +365,8 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 
 	rl.MyInfo = realInfo
 
-	if err := rl.Send(context, true, netd.ClustersMessage); err != nil {
+	cld := netd.WrapResponse(netd.ClustersMessage, []byte(rl.ServerInfo.ServerID))
+	if err := rl.Send(context, true, cld); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -417,7 +419,8 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 		return err
 	}
 
-	rl.scratchPad = append(rl.scratchPad, clusterMessage)
+	// Add all message requests from the cluster.
+	rl.scratchPad = append(rl.scratchPad, messages...)
 
 	if err := rl.Send(context, true, netd.OkMessage); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
@@ -429,7 +432,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 }
 
 func (rl *TCPProvider) beginScratchProcedure(context interface{}, cx *netd.Connection) {
-	rl.Config.Log(context, "beginScratchProcedure", "Started : Addr[%q]", rl.addr)
+	rl.Config.Log(context, "beginScratchProcedure", "Started : Addr[%q] : Scratch Messages[%+q]", rl.addr, rl.scratchPad)
 
 	<-rl.scratchChannel
 
