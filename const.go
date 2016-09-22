@@ -60,6 +60,14 @@ const (
 	// AUTH_TIMEOUT is the authorization wait time.
 	AUTH_TIMEOUT = float64(2*TLS_TIMEOUT) / float64(time.Second)
 
+	// DEFAULT_RECONNECT_INTERVAL is how often a record gets adjust before trying again.
+	DEFAULT_RECONNECT_INTERVAL = 2 * time.Second
+
+	// MAX_RECONNECT_COUNT  is the total maximum reconnection tries which will be done,
+	// where each retry will fold out into a 10 seconds range i.e after 2 seconds each five steps
+	// it will stop leading to retry for 10 seconds.
+	MAX_RECONNECT_COUNT = 5
+
 	// DEFAULT_PING_INTERVAL is how often pings are sent to clients and routes.
 	DEFAULT_PING_INTERVAL = 2 * time.Minute
 

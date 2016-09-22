@@ -515,12 +515,13 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 	}
 
 	clusters := c.Clusters(context)
-	cm, err := clusters.HasAddr(addr, port)
-	c.config.Log(context, "tcp.NewCluster", "Info : Found : %s", cm.String())
+	_, err := clusters.HasAddr(addr, port)
 	if err == nil {
 		c.config.Log(context, "tcp.NewCluster", "Completed : Cluster already connected")
 		return nil
 	}
+
+	// c.config.Log(context, "tcp.NewCluster", "Info : Found : %s", cm.String())
 
 	caddr := net.JoinHostPort(addr, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", caddr, netd.DEFAULT_DIAL_TIMEOUT)
@@ -543,6 +544,7 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 	c.mc.Unlock()
 
 	info.ConnectInitiator = true
+	info.HandleReconnect = true
 
 	connection, err := c.newFromConn(context, conn, info)
 	if err != nil {
@@ -551,6 +553,10 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 	}
 
 	connection.MyInfo.ClusterNode = true
+	// connection.MyInfo.ConnectInitiator = info.ConnectInitiator
+	connection.MyInfo.HandleReconnect = true
+
+	c.config.Log(context, "tcp.NewClusterFrom", "Created net.Conn : Info[%#v]", connection.MyInfo)
 
 	if err := c.newClusterConn(context, connection); err != nil {
 		c.config.Error(context, "tcp.NewCusterFrom", err, "Completed")
@@ -660,14 +666,62 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 	}
 
 	raddr := connection.RemoteAddr().String()
+	myInfo := connection.MyInfo
+	serverInfo := connection.ServerInfo
 
 	// Listen for the end signal and descrease connection wait group.
 	go func() {
 		<-provider.CloseNotify()
 		config.Log(context, "tcp.newClusterConn", "Provider with Addr[%+s] ending connection ", raddr)
-		c.conWG.Done()
-		c.router.Unregister(netd.ClusterRoute, provider)
+
+		c.mc.Lock()
+		{
+			c.conWG.Done()
+			c.router.Unregister(netd.ClusterRoute, provider)
+
+			clen := len(c.clusters)
+
+			for index, pr := range c.clusters {
+				if pr != provider {
+					continue
+				}
+
+				if index+1 < clen {
+					c.clusters = append(c.clusters[:index], c.clusters[index+1:]...)
+				} else {
+					c.clusters = c.clusters[:clen-1]
+				}
+
+				break
+			}
+		}
+		c.mc.Unlock()
+
 		c.clusterEvents.FireDisconnect(provider)
+
+		{
+			var reCount int
+			reWait := netd.DEFAULT_RECONNECT_INTERVAL
+
+		reconnectReduce:
+			{
+				if myInfo.ClusterNode && serverInfo.HandleReconnect {
+					if err := c.reconnectHandler(context, myInfo); err != nil {
+						c.config.Error(context, "newClusterConn", err, "Failed Reconnection : Total Time[%s] : Total Retries[%d] : Info[%s]", reWait, reCount, myInfo.ID())
+
+						reCount++
+						if reCount >= netd.MAX_RECONNECT_COUNT {
+							return
+						}
+
+						reWait = reWait + netd.DEFAULT_RECONNECT_INTERVAL
+						<-time.After(reWait)
+						goto reconnectReduce
+					}
+				}
+			}
+		}
+
 	}()
 
 	c.mc.Lock()
@@ -726,7 +780,28 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 	go func() {
 		<-provider.CloseNotify()
 		config.Log(context, "tcp.newClientConn", "Provider with Addr[%+s] ending connection ", raddr)
-		c.conWG.Done()
+
+		c.mc.Lock()
+		{
+			c.conWG.Done()
+			clen := len(c.clients)
+
+			for index, pr := range c.clients {
+				if pr != provider {
+					continue
+				}
+
+				if index+1 < clen {
+					c.clients = append(c.clients[:index], c.clients[index+1:]...)
+				} else {
+					c.clients = c.clients[:clen-1]
+				}
+
+				break
+			}
+		}
+		c.mc.Unlock()
+
 		c.clientEvents.FireDisconnect(provider)
 	}()
 
@@ -739,6 +814,18 @@ func (c *TCPConn) newClientConn(context interface{}, connection *Connection) err
 
 	config.Log(context, "tcp.newClientConn", "Provider Ready Addr[%+s] ", connection.RemoteAddr().String())
 	c.clientEvents.FireConnect(provider)
+	return nil
+}
+
+func (c *TCPConn) reconnectHandler(context interface{}, info netd.BaseInfo) error {
+	c.config.Log(context, "reconnectHandler", "Retrying Connection : Info[%s]", info.ID())
+
+	if err := c.NewCluster(context, info.Addr, info.Port); err != nil {
+		c.config.Error(context, "reconnectHandler", err, "Completed")
+		return err
+	}
+
+	c.config.Log(context, "reconnectHandler", "Completed")
 	return nil
 }
 
@@ -771,7 +858,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, serverInfo net
 	connInfo.ServerID = serverInfo.ServerID
 	connInfo.Version = netd.VERSION
 
-	config.Log(context, "tcp.newFromConn", "New Connection : Info[%s]", connInfo.String())
+	config.Log(context, "tcp.newFromConn", "New Connection : CLient[%#v] : Server[%#v]", connInfo, serverInfo)
 
 	var connection Connection
 
@@ -796,7 +883,7 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, serverInfo net
 		tlsConn.SetReadDeadline(time.Now().Add(ttl))
 
 		if err := tlsConn.Handshake(); err != nil {
-			config.Error(context, "newFromConn", err, "New Connection : Addr[%a] : Failed Handshake", conn.RemoteAddr().String())
+			config.Error(context, "newFromConn", err, "New Connection : Addr[%s] : Failed Handshake", conn.RemoteAddr().String())
 			tlsConn.SetReadDeadline(time.Time{})
 			tlsConn.Close()
 			return nil, err

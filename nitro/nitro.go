@@ -57,6 +57,7 @@ var (
 	subs        = []byte("SUBS")
 	unsub       = []byte("UNSUB")
 	pub         = []byte("PUB")
+	exit        = []byte("EXIT")
 	pingMessage = []byte("PING")
 	pongMessage = []byte("P0NG")
 	connect     = []byte("CONNECT")
@@ -240,8 +241,17 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 
 // HandleConnect handles the response of sending the server info recieved
 // for the connect request.
-func (n *Nitro) HandleConnect(context interface{}, cx *netd.Connection) ([]byte, bool, error) {
+func (n *Nitro) HandleConnect(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
 	n.Log(context, "Nitro.HandleConnect", "Started")
+
+	if len(data) == 0 {
+		err := fmt.Errorf("Expected requester ID")
+		n.Error(context, "Nitro.HandleConnect", err, "Completed")
+		return nil, true, err
+	}
+
+	clientID := string(data[0])
+	n.Log(context, "Nitro.HandleConnect", "Info : Connect Request from Server %q", clientID)
 
 	info, err := json.Marshal(cx.Server)
 	if err != nil {
@@ -339,10 +349,9 @@ func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Conn
 	}
 
 	clusterRes := netd.WrapResponse(netd.ClusterMessage, netd.WrapBlockParts(clusterList))
-	clusterReq := netd.WrapResponse(netd.ClustersMessage, []byte(cx.Server.ServerID))
 
 	n.Log(context, "Nitro.HandleClusters", "Completed")
-	return netd.WrapResponse(nil, clusterRes, clusterReq), false, nil
+	return clusterRes, false, nil
 }
 
 // HandleSubscriptions handles the requests of internal subscriptions list which details all current
@@ -443,7 +452,7 @@ func (n *Nitro) HandleFire(context interface{}, message *netd.SubMessage) ([]byt
 func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message netd.Message) ([]byte, bool, error) {
 	switch {
 	case bytes.Equal(message.Command, netd.ConnectMessage):
-		return n.HandleConnect(context, cx)
+		return n.HandleConnect(context, message.Data, cx)
 
 	case bytes.Equal(message.Command, netd.InfoMessage):
 		return n.HandleInfo(context, cx)
@@ -480,6 +489,9 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 
 	case bytes.Equal(message.Command, netd.OkMessage):
 		return nil, false, nil
+
+	case bytes.Equal(message.Command, exit):
+		return netd.OkMessage, true, nil
 
 	case bytes.Equal(message.Command, netd.RespMessage):
 		return nil, false, nil

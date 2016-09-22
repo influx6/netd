@@ -162,6 +162,7 @@ type BaseInfo struct {
 	MaxPayload       int    `json:"max_payload"`
 	ClusterNode      bool   `json:"cluster_node"`
 	ConnectInitiator bool   `json:"-"`
+	HandleReconnect  bool   `json:"-"`
 }
 
 // Match the provided info with the base info.

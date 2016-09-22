@@ -112,6 +112,15 @@ func (bp *TCPProvider) IsRunning() bool {
 	return done
 }
 
+// Defer adds a message into the defered scratch pad which will be processed on the
+// next request call.
+func (bp *TCPProvider) Defer(context interface{}, msgs ...netd.Message) error {
+	bp.Config.Log(context, "Defer", "Started : Message : '%+s'", msgs)
+	bp.scratchPad = append(bp.scratchPad, msgs...)
+	bp.Config.Log(context, "Defer", "Completed")
+	return nil
+}
+
 // Fire sends the provided payload into the provided write stream.
 func (bp *TCPProvider) Fire(context interface{}, msg *netd.SubMessage) error {
 	bp.Config.Log(context, "Fire", "Started : Connection[%+s] : Message[%#v]", bp.addr, msg)
@@ -162,29 +171,6 @@ func (bp *TCPProvider) Send(context interface{}, doFlush bool, msg ...[]byte) er
 	}
 
 	bp.Config.Log(context, "Send", "Completed")
-	return nil
-}
-
-//==============================================================================
-
-// SendResponse sends a giving response to the connection. This is used for mainly responding to
-// requests recieved through the pipeline.
-func (bp *TCPProvider) SendResponse(context interface{}, doFlush bool, msg ...[]byte) error {
-	bp.Config.Log(context, "SendResponse", "Started : Connection[%+s]", bp.addr)
-
-	if len(msg) == 0 {
-		bp.Config.Log(context, "SendResponse", "Completed")
-		return nil
-	}
-
-	response := netd.WrapResponse(netd.RespMessage, msg...)
-
-	if err := bp.SendMessage(context, response, doFlush); err != nil {
-		bp.Config.Error(context, "SendResponse", err, "Completed")
-		return err
-	}
-
-	bp.Config.Log(context, "SendResponse", "Completed")
 	return nil
 }
 
@@ -290,7 +276,7 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 		return errors.New("Provider underline connection closed")
 	}
 
-	if err := rl.Send(context, true, netd.ConnectMessage); err != nil {
+	if err := rl.Send(context, true, netd.WrapResponse(netd.ConnectMessage, []byte(rl.ServerInfo.ServerID))); err != nil {
 		rl.Config.Error(context, "negotiateCluster", err, "Completed")
 		return err
 	}
@@ -363,7 +349,9 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 		return err
 	}
 
-	rl.MyInfo = realInfo
+	rl.Config.Log(context, "negotiateCluster", "Server Connection : Server { Old: %s  New: %s}  ", rl.MyInfo.ID(), realInfo.ID())
+	rl.MyInfo.ServerID = realInfo.ServerID
+	rl.MyInfo.ClusterNode = realInfo.ClusterNode
 
 	cld := netd.WrapResponse(netd.ClustersMessage, []byte(rl.ServerInfo.ServerID))
 	if err := rl.Send(context, true, cld); err != nil {
@@ -431,27 +419,6 @@ func (rl *TCPProvider) negotiateCluster(context interface{}) error {
 	return nil
 }
 
-func (rl *TCPProvider) beginScratchProcedure(context interface{}, cx *netd.Connection) {
-	rl.Config.Log(context, "beginScratchProcedure", "Started : Addr[%q] : Scratch Messages[%+q]", rl.addr, rl.scratchPad)
-
-	<-rl.scratchChannel
-
-	time.Sleep(1 * time.Millisecond)
-
-	doClose, err := rl.handler.Process(context, cx, rl.scratchPad...)
-	if err != nil {
-		rl.Config.Error(context, "beginScratchProcedure", err, "Completed")
-		rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
-		rl.Close(context)
-	}
-
-	if doClose {
-		rl.Close(context)
-	}
-
-	rl.Config.Log(context, "beginScratchProcedure", "Completed")
-}
-
 func (rl *TCPProvider) readLoop() {
 	context := "tcp.TCPProvider"
 
@@ -476,8 +443,8 @@ func (rl *TCPProvider) readLoop() {
 		cx.Clusters = rl
 		cx.Messager = rl
 		cx.Subscriber = rl
-		cx.Base = rl.MyInfo
-		cx.Server = rl.ServerInfo
+		cx.Base = &(rl.MyInfo)
+		cx.Server = &(rl.ServerInfo)
 		cx.Connections = rl.Connections
 		cx.Router = rl.Router
 		cx.Parser = rl.parser
@@ -489,13 +456,15 @@ func (rl *TCPProvider) readLoop() {
 
 	if isCluster && rl.ServerInfo.ConnectInitiator {
 		if err := rl.negotiateCluster(context); err != nil {
+			rl.Config.Error(context, "ReadLoop", err, "Completed  :  Connection{%+s}", rl.addr)
 			rl.SendError(context, true, fmt.Errorf("Error negotiating with  netd.ClusterMessage: %s", err.Error()))
 			rl.waiter.Done()
 			rl.Close(context)
 			return
 		}
 
-		go rl.beginScratchProcedure(context, &cx)
+		// cx.Base = rl.MyInfo
+		// cx.Server = rl.ServerInfo
 	}
 
 	rl.lock.Lock()
@@ -505,6 +474,8 @@ func (rl *TCPProvider) readLoop() {
 	block := make([]byte, netd.MIN_DATA_WRITE_SIZE)
 
 	{
+		rl.Config.Log(context, "ReadLoop", "Boot Loop  :  Connection{%+s} : Running[%t] : Closed[%t]", rl.addr, rl.IsRunning(), rl.IsClosed())
+
 	loopRunner:
 		for rl.IsRunning() && !rl.IsClosed() {
 
@@ -512,11 +483,13 @@ func (rl *TCPProvider) readLoop() {
 			// process then send signal to pending go-routine listening to the
 			// scratchChannel.
 			if rl.scratchPad != nil {
+				go rl.beginScratchProcedure(context, &cx)
 				rl.scratchChannel <- struct{}{}
 			}
 
 			n, err := rl.Conn.Read(block)
 			if err != nil {
+				rl.Config.Error(context, "readLoop", err, "Read Error : Closing Socket :  Server[%q] : Client[%q]`", sid, cid)
 				go rl.Close(context)
 				break loopRunner
 			}
@@ -558,4 +531,25 @@ func (rl *TCPProvider) readLoop() {
 	}
 
 	rl.Config.Log(context, "ReadLoop", "Completed  :  Connection{%+s}", rl.addr)
+}
+
+func (rl *TCPProvider) beginScratchProcedure(context interface{}, cx *netd.Connection) {
+	rl.Config.Log(context, "beginScratchProcedure", "Started : Addr[%q] : Scratch Messages[%+q]", rl.addr, rl.scratchPad)
+
+	<-rl.scratchChannel
+
+	time.Sleep(1 * time.Millisecond)
+
+	doClose, err := rl.handler.Process(context, cx, rl.scratchPad...)
+	if err != nil {
+		rl.Config.Error(context, "beginScratchProcedure", err, "Completed")
+		rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+		rl.Close(context)
+	}
+
+	if doClose {
+		rl.Close(context)
+	}
+
+	rl.Config.Log(context, "beginScratchProcedure", "Completed")
 }

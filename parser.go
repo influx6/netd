@@ -311,6 +311,18 @@ func WrapResponses(header []byte, msgs ...[][]byte) []byte {
 	return bytes.Join(responses, colonSlice)
 }
 
+// WrapResponseBlock wraps each byte slice in the multiple byte slice with with
+// given header returning a single byte slice joined with a colon : symbol.
+func WrapResponseBlock(header []byte, msgs ...[]byte) []byte {
+	var msg []byte
+
+	if msgs != nil {
+		msg = WrapBlockParts(msgs)
+	}
+
+	return WrapBlock(WrapWithHeader(header, msg))
+}
+
 // WrapResponse wraps each byte slice in the multiple byte slice with with
 // given header returning a single byte slice joined with a colon : symbol.
 func WrapResponse(header []byte, msgs ...[]byte) []byte {

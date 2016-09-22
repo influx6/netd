@@ -22,6 +22,11 @@ type Connections interface {
 	SendToClusters(context interface{}, id string, msg []byte, flush bool) error
 }
 
+// DeferRequest defines an interface for defering processing of requests.
+type DeferRequest interface {
+	Defer(context interface{}, msg ...Message) error
+}
+
 // ConnectionEvents defines a interface which defines a connection event
 // propagator.
 type ConnectionEvents interface {
@@ -52,6 +57,7 @@ type Subscriber interface {
 type Provider interface {
 	Messager
 	Subscriber
+	DeferRequest
 	BaseInfo() BaseInfo
 	CloseNotify() chan struct{}
 	Close(context interface{}) error
@@ -61,10 +67,10 @@ type Provider interface {
 // Messager defines an interface which exposes methods for sending messages down
 // a connection pipeline.
 type Messager interface {
-	SendMessage(context interface{}, msg []byte, flush bool) error
-	SendError(context interface{}, flush bool, msg ...error) error
 	Send(context interface{}, flush bool, msg ...[]byte) error
-	SendResponse(context interface{}, flush bool, msg ...[]byte) error
+	SendError(context interface{}, flush bool, msg ...error) error
+	SendMessage(context interface{}, msg []byte, flush bool) error
+	// SendBlock(context interface{}, flush bool, msg ...[]byte) error
 }
 
 // Connection defines a baselevel struct for storing connection details
@@ -73,9 +79,10 @@ type Connection struct {
 	Connections
 	Subscriber
 	Messager
+	DeferRequest
 
-	Base     BaseInfo
-	Server   BaseInfo
+	Base     *BaseInfo
+	Server   *BaseInfo
 	Router   Router
 	Stat     StatProvider
 	Parser   MessageParser
@@ -181,7 +188,7 @@ func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 	var found bool
 
 	for _, info = range s {
-		if info.Addr == addr || info.Port == port {
+		if info.Addr == addr && info.Port == port {
 			found = true
 			break
 		}
