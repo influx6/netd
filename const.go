@@ -92,6 +92,12 @@ var (
 	// InfoMessage defines the info header for request connection info.
 	InfoMessage = []byte("INFO")
 
+	// IdentityMessage defines the header sent initialialy between clusters to identify themselves.
+	IdentityMessage = []byte("IDENTITY")
+
+	// InfoResMessage defines the info header for request connection info.
+	InfoResMessage = []byte("INFORES")
+
 	// OkMessage defines the header used for signifying response success.
 	OkMessage = []byte("OK")
 
@@ -116,6 +122,12 @@ var (
 
 	// ConnectMessage defines the header sent by a new cluster.
 	ConnectMessage = []byte("CONNECT")
+
+	// ConnectResMessage defines the header sent by a new cluster connect response.
+	ConnectResMessage = []byte("CONNECTRES")
+
+	// DeferRequestMessage defines the header sent by for a deffernt of a request for the next read cycle.
+	DeferRequestMessage = []byte("DEFEREQ")
 
 	// ErrMessage signifies the header used to signal error messages.
 	ErrMessage = []byte("+ERR")

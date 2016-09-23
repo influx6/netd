@@ -213,6 +213,12 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 				}
 
 				// Are we at message end and do are we starting a new block?
+				if i+1 >= msgLen {
+					blocks = append(blocks, block)
+					block = nil
+					break
+				}
+
 				if msg[i+1] == ':' && i+2 >= msgLen {
 					return nil, errors.New("Invalid new Block start")
 				}

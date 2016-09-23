@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"sync/atomic"
 
@@ -80,6 +81,33 @@ type Nitro struct {
 	pn  int64
 }
 
+// HandleIdentity handles the identity transfer request received over a cluster connection.
+func (n *Nitro) HandleIdentity(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleIdentity", "Started : Data : %+q", data)
+
+	if len(data) < 2 {
+		err := errors.New("Received invalid identity data: Slice less than 2 in length")
+		n.Error(context, "Nitro.HandleIdentity", err, "Completed")
+		return nil, true, err
+	}
+
+	clusterID := string(data[0])
+	addr, port, err := net.SplitHostPort(string(data[1]))
+	if err != nil {
+		n.Error(context, "Nitro.HandleIdentity", err, "Completed")
+		return nil, true, err
+	}
+
+	cx.Base.ServerID = clusterID
+	cx.Base.RealAddr = addr
+
+	iport, _ := strconv.Atoi(port)
+	cx.Base.RealPort = iport
+
+	n.Log(context, "Nitro.HandleIdentity", "Completed")
+	return netd.OkMessage, false, nil
+}
+
 // HandleData handles the processing of incoming data and sending the response
 // down the router line.
 func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
@@ -110,15 +138,7 @@ func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connecti
 		}
 
 		var sourceInfo netd.BaseInfo
-		sourceInfo.Port = int(source["port"].(float64))
-		sourceInfo.MaxPayload = int(source["max_payload"].(float64))
-		sourceInfo.Addr = source["addr"].(string)
-		sourceInfo.IP = source["ip"].(string)
-		sourceInfo.Version = source["version"].(string)
-		sourceInfo.GoVersion = source["go_version"].(string)
-		sourceInfo.ServerID = source["server_id"].(string)
-		sourceInfo.ClientID = source["client_id"].(string)
-		sourceInfo.ClusterNode = source["cluster_node"].(bool)
+		sourceInfo.FromMap(source)
 
 		cx.Router.Handle(context, message.Topic, message.Payload, sourceInfo)
 	}
@@ -147,6 +167,11 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 	default:
 		for _, hm := range data[1:] {
 			cx.Router.Handle(context, route, hm, cx.Base)
+		}
+
+		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(pub, data...), true); err != nil {
+			n.Error(context, "Nitro.HandlePublish", err, "Completed")
+			return nil, true, err
 		}
 	}
 
@@ -239,6 +264,84 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 	return netd.OkMessage, false, nil
 }
 
+// HandleDeferMessage handles the process of the deffered message request.
+func (n *Nitro) HandleDeferMessage(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleDeferMessage", "Started : Data[%s]", data)
+
+	if len(data) == 0 {
+		err := fmt.Errorf("Expected deferred request not empty data")
+		n.Error(context, "Nitro.HandleDeferMessage", err, "Completed")
+		return nil, true, err
+	}
+
+	var blocks []byte
+
+	if len(data) < 2 {
+		blocks = netd.WrapBlock(data[0])
+	} else {
+		blocks = netd.WrapResponseBlock(data[0], data[1:]...)
+	}
+
+	n.Log(context, "Nitro.HandleDeferMessage", "Info : Parsing Deferred Message : %+s", blocks)
+
+	msgs, err := cx.Parser.Parse(blocks)
+	if err != nil {
+		n.Error(context, "Nitro.HandleDeferMessage", err, "Completed")
+		return nil, true, err
+	}
+
+	n.Log(context, "Nitro.HandleDeferMessage", "Info : Generating  Message Structure: %#v", msgs)
+
+	if err := cx.Defer(context, msgs...); err != nil {
+		n.Error(context, "Nitro.HandleDeferMessage", err, "Completed")
+		return nil, true, err
+	}
+
+	n.Log(context, "Nitro.HandleDeferMessage", "Completed")
+	return nil, false, nil
+}
+
+// HandleConnectResponse handles the response recieved from the
+func (n *Nitro) HandleConnectResponse(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleConnectResponse", "Started : Data[%s]", data)
+
+	if len(data) < 1 {
+		err := fmt.Errorf("Expected connect base info")
+		n.Error(context, "Nitro.HandleConnectResponse", err, "Completed")
+		return nil, true, err
+	}
+
+	var info netd.BaseInfo
+	if err := json.Unmarshal(data[0], &info); err != nil {
+		n.Error(context, "Nitro.HandleConnectResponse", err, "Completed")
+		return nil, true, err
+	}
+
+	n.Log(context, "Nitro.HandleConnectResponse", "Info :  %s", info.ID())
+
+	cx.Base.ServerID = info.ServerID
+	cx.Base.ClusterNode = info.ClusterNode
+
+	n.Log(context, "Nitro.HandleConnectResponse", "New Info :  %s", cx.Base.ID())
+
+	clusterList := [][]byte{netd.ClusterMessage}
+
+	clusters := cx.Connections.Clusters(context)
+	for _, cluster := range clusters {
+		if cx.Base.Match(cluster) {
+			continue
+		}
+
+		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.Addr, cluster.Port)))
+	}
+
+	clreq := netd.WrapResponseBlock(netd.ClustersMessage, []byte(cx.Server.ServerID))
+	csreq := netd.WrapResponseBlock(netd.DeferRequestMessage, clusterList...)
+
+	n.Log(context, "Nitro.HandleConnectResponse", "Completed")
+	return netd.WrapResponse(nil, clreq, csreq), false, nil
+}
+
 // HandleConnect handles the response of sending the server info recieved
 // for the connect request.
 func (n *Nitro) HandleConnect(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
@@ -260,7 +363,7 @@ func (n *Nitro) HandleConnect(context interface{}, data [][]byte, cx *netd.Conne
 	}
 
 	n.Log(context, "Nitro.HandleConnect", "Completed")
-	return netd.WrapResponse(netd.RespMessage, info), false, nil
+	return netd.WrapResponse(netd.ConnectResMessage, info), false, nil
 }
 
 // HandleInfo handles the response to info requests.
@@ -274,7 +377,7 @@ func (n *Nitro) HandleInfo(context interface{}, cx *netd.Connection) ([]byte, bo
 	}
 
 	n.Log(context, "Nitro.HandleInfo", "Completed")
-	return netd.WrapResponse(netd.RespMessage, info), false, nil
+	return netd.WrapResponse(netd.InfoResMessage, info), false, nil
 }
 
 // HandleCluster handles the cluster request, requesting the new cluster provided
@@ -321,7 +424,7 @@ func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Conn
 	}
 
 	clientID := data[0]
-	data = data[1:]
+	// data = data[1:]
 
 	cisd := string(clientID)
 	if n.rcs[cisd] {
@@ -341,17 +444,15 @@ func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Conn
 
 	for _, cluster := range clusters {
 		if cx.Base.Match(cluster) {
-			n.Log(context, "Nitro.HandleClusters", "Info : Found Self Referencing : {%#v}", cluster)
+			n.Log(context, "Nitro.HandleClusters", "Info : Found Self Referencing : {%#v} : Against : {%#v}", cluster, cx.Base)
 			continue
 		}
 
 		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.Addr, cluster.Port)))
 	}
 
-	clusterRes := netd.WrapResponse(netd.ClusterMessage, netd.WrapBlockParts(clusterList))
-
 	n.Log(context, "Nitro.HandleClusters", "Completed")
-	return clusterRes, false, nil
+	return netd.WrapResponse(netd.ClusterMessage, netd.WrapBlockParts(clusterList)), false, nil
 }
 
 // HandleSubscriptions handles the requests of internal subscriptions list which details all current
@@ -451,8 +552,14 @@ func (n *Nitro) HandleFire(context interface{}, message *netd.SubMessage) ([]byt
 // set.
 func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message netd.Message) ([]byte, bool, error) {
 	switch {
+	case bytes.Equal(message.Command, netd.ConnectResMessage):
+		return n.HandleConnectResponse(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.ConnectMessage):
 		return n.HandleConnect(context, message.Data, cx)
+
+	case bytes.Equal(message.Command, netd.DeferRequestMessage):
+		return n.HandleDeferMessage(context, message.Data, cx)
 
 	case bytes.Equal(message.Command, netd.InfoMessage):
 		return n.HandleInfo(context, cx)
@@ -478,6 +585,9 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, subs):
 		return n.HandleSubscriptions(context, message.Data, cx)
 
+	case bytes.Equal(message.Command, netd.IdentityMessage):
+		return n.HandleIdentity(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, sub):
 		return n.HandleSubscribe(context, message.Data, cx)
 
@@ -492,6 +602,9 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 
 	case bytes.Equal(message.Command, exit):
 		return netd.OkMessage, true, nil
+
+	case bytes.Equal(message.Command, netd.InfoResMessage):
+		return nil, false, nil
 
 	case bytes.Equal(message.Command, netd.RespMessage):
 		return nil, false, nil

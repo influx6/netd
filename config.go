@@ -154,6 +154,8 @@ type BaseInfo struct {
 	Port             int    `json:"port"`
 	LocalAddr        string `json:"local_addr"`
 	LocalPort        int    `json:"local_port"`
+	RealAddr         string `json:"real_addr"`
+	RealPort         int    `json:"real_port"`
 	ServerID         string `json:"server_id"`
 	ClientID         string `json:"client_id"`
 	Version          string `json:"version"`
@@ -165,20 +167,63 @@ type BaseInfo struct {
 	HandleReconnect  bool   `json:"-"`
 }
 
-// Match the provided info with the base info.
-func (b BaseInfo) Match(info BaseInfo) bool {
-	// if b.ServerID == info.ServerID {
-	// 	return true
-	// }
-
-	if b.Addr == info.Addr && b.Port == info.Port {
-		return true
+// FromMap collects the  needed information for the baseInfo from the provided map.
+func (b *BaseInfo) FromMap(info map[string]interface{}) {
+	if port, ok := info["port"].(float64); ok {
+		b.Port = int(port)
 	}
 
-	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.Port == info.Port {
-		return true
+	if port, ok := info["local_port"].(float64); ok {
+		b.LocalPort = int(port)
 	}
 
+	if port, ok := info["real_port"].(float64); ok {
+		b.RealPort = int(port)
+	}
+
+	if mx, ok := info["max_payload"].(float64); ok {
+		b.MaxPayload = int(mx)
+	}
+
+	if p, ok := info["addr"].(string); ok {
+		b.Addr = p
+	}
+
+	if p, ok := info["real_addr"].(string); ok {
+		b.RealAddr = p
+	}
+
+	if p, ok := info["local_addr"].(string); ok {
+		b.LocalAddr = p
+	}
+
+	if p, ok := info["ip"].(string); ok {
+		b.IP = p
+	}
+
+	if p, ok := info["version"].(string); ok {
+		b.Version = p
+	}
+
+	if p, ok := info["go_version"].(string); ok {
+		b.GoVersion = p
+	}
+
+	if p, ok := info["server_id"].(string); ok {
+		b.ServerID = p
+	}
+
+	if p, ok := info["client_id"].(string); ok {
+		b.ClientID = p
+	}
+
+	if cn, ok := info["cluster_node"].(bool); ok {
+		b.ClusterNode = cn
+	}
+}
+
+// LocalMatch the provided info with the base info.
+func (b BaseInfo) LocalMatch(info BaseInfo) bool {
 	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.LocalPort == info.Port {
 		return true
 	}
@@ -191,6 +236,19 @@ func (b BaseInfo) Match(info BaseInfo) bool {
 		if b.LocalAddr == info.LocalAddr && b.LocalPort == info.LocalPort {
 			return true
 		}
+	}
+
+	return false
+}
+
+// Match the provided info with the base info.
+func (b BaseInfo) Match(info BaseInfo) bool {
+	if b.Addr == info.Addr && b.Port == info.Port {
+		return true
+	}
+
+	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.Port == info.Port {
+		return true
 	}
 
 	return false
