@@ -156,29 +156,8 @@ func (c *TCPConn) SendToClusters(context interface{}, id string, msg []byte, flu
 	c.mc.Lock()
 	defer c.mc.Unlock()
 
-	var msgs [][]byte
-
 	if len(msg) >= netd.MAX_PAYLOAD_SIZE {
-		for msg != nil {
-			msgLen := len(msg)
-			if msgLen == netd.MAX_PAYLOAD_SIZE {
-				msgs = append(msgs, msg)
-				msg = nil
-			}
-
-			if msgLen > netd.MAX_PAYLOAD_SIZE {
-				block := msg[:netd.MAX_PAYLOAD_SIZE]
-				msg = msg[netd.MAX_PAYLOAD_SIZE+1:]
-				msgs = append(msgs, block)
-				continue
-			}
-
-			msgs = append(msgs, msg)
-			msg = nil
-			break
-		}
-	} else {
-		msgs = [][]byte{msg}
+		return errors.New("Data size above max allowed")
 	}
 
 	for _, cluster := range c.clusters {
@@ -203,27 +182,10 @@ func (c *TCPConn) SendToClusters(context interface{}, id string, msg []byte, flu
 		c.config.Trace.Trace(context, bytes.Join(b, []byte("")))
 		c.config.Trace.End(context, []byte("SendToClusters"))
 
-		if len(msgs) == 1 {
-			if err := cluster.SendMessage(context, msgs[0], flush); err != nil {
-				c.config.Error(context, "SendToClient", err, "Failed to deliver to cluster : Cluster[%s]", cluster.BaseInfo().String())
-			}
-
-			continue
+		if err := cluster.SendMessage(context, msg, flush); err != nil {
+			c.config.Error(context, "SendToClient", err, "Failed to deliver to cluster : Cluster[%s]", cluster.BaseInfo().String())
 		}
 
-		if err := cluster.SendMessage(context, netd.BeginMessage, flush); err != nil {
-			c.config.Error(context, "SendToClient", err, "Failed to send message begin header to cluster : ClusterInfo[%s]", cluster.BaseInfo().String())
-		}
-
-		for _, ms := range msgs {
-			if err := cluster.SendMessage(context, ms, flush); err != nil {
-				c.config.Error(context, "SendToClient", err, "Failed to deliver to cluster : ClientInfo[%s]", cluster.BaseInfo().String())
-			}
-		}
-
-		if err := cluster.SendMessage(context, netd.EndMessage, flush); err != nil {
-			c.config.Error(context, "SendToCluster", err, "Failed to send message end header to cluster : ClusterInfo[%s]", cluster.BaseInfo().String())
-		}
 	}
 
 	c.config.Log(context, "SendToCluster", "Completed")
@@ -237,29 +199,8 @@ func (c *TCPConn) SendToClients(context interface{}, id string, msg []byte, flus
 	c.mc.Lock()
 	defer c.mc.Unlock()
 
-	var msgs [][]byte
-
 	if len(msg) >= netd.MAX_PAYLOAD_SIZE {
-		for msg != nil {
-			msgLen := len(msg)
-			if msgLen == netd.MAX_PAYLOAD_SIZE {
-				msgs = append(msgs, msg)
-				msg = nil
-			}
-
-			if msgLen > netd.MAX_PAYLOAD_SIZE {
-				block := msg[:netd.MAX_PAYLOAD_SIZE]
-				msg = msg[netd.MAX_PAYLOAD_SIZE+1:]
-				msgs = append(msgs, block)
-				continue
-			}
-
-			msgs = append(msgs, msg)
-			msg = nil
-			break
-		}
-	} else {
-		msgs = [][]byte{msg}
+		return errors.New("Data size above max allowed")
 	}
 
 	for _, client := range c.clients {
@@ -284,27 +225,10 @@ func (c *TCPConn) SendToClients(context interface{}, id string, msg []byte, flus
 		c.config.Trace.Trace(context, bytes.Join(b, []byte("")))
 		c.config.Trace.End(context, []byte("SendToClient"))
 
-		if len(msgs) == 1 {
-			if err := client.SendMessage(context, msgs[0], flush); err != nil {
-				c.config.Error(context, "SendToClient", err, "Failed to deliver to client : ClientInfo[%s]", client.BaseInfo().String())
-			}
-
-			continue
+		if err := client.SendMessage(context, msg, flush); err != nil {
+			c.config.Error(context, "SendToClient", err, "Failed to deliver to client : ClientInfo[%s]", client.BaseInfo().String())
 		}
 
-		if err := client.SendMessage(context, netd.BeginMessage, flush); err != nil {
-			c.config.Error(context, "SendToClient", err, "Failed to send message begin header to client : ClientInfo[%s]", client.BaseInfo().String())
-		}
-
-		for _, ms := range msgs {
-			if err := client.SendMessage(context, ms, flush); err != nil {
-				c.config.Error(context, "SendToClient", err, "Failed to  message block deliver to client : ClientInfo[%s]", client.BaseInfo().String())
-			}
-		}
-
-		if err := client.SendMessage(context, netd.EndMessage, flush); err != nil {
-			c.config.Error(context, "SendToClient", err, "Failed to send message end header to client : ClientInfo[%s]", client.BaseInfo().String())
-		}
 	}
 
 	c.config.Log(context, "SendToClient", "Completed")
