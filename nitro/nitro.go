@@ -58,7 +58,7 @@ var (
 	subs        = []byte("SUBS")
 	unsub       = []byte("UNSUB")
 	pub         = []byte("PUB")
-	clusterpub  = []byte("CPUB")
+	clusterpub  = []byte("_CPUB")
 	exit        = []byte("EXIT")
 	pingMessage = []byte("PING")
 	pongMessage = []byte("P0NG")
@@ -72,12 +72,9 @@ type Nitro struct {
 	netd.Logger
 	netd.Trace
 
-	Next    netd.Middleware
-	payload bytes.Buffer
-	payloadType []byte
-
+	Next         netd.Middleware
+	payload      bytes.Buffer
 	currentRoute []byte
-	currentMsgr  []byte
 
 	rcs map[string]bool
 	pn  int64
@@ -149,36 +146,6 @@ func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connecti
 	return netd.OkMessage, false, nil
 }
 
-// HandleClusterPublish handles all publish for different topics to clusters.
-func (n *Nitro) HandleClusterPublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
-	n.Log(context, "Nitro.HandlePublish", "Started : Data : %+q", data)
-
-	if len(data) < 2 {
-		err := errors.New("Invalid cluster publish data received for publishing")
-		n.Error(context, "Nitro.HandlePublish", err, "Completed")
-		return nil, true, err
-	}
-
-
-	route := data[0]
-	head := data[1]
-
-	switch {
-	case bytes.Equal(head, netd.BeginMessage):
-		n.payloadType = clusterpub
-		n.currentRoute = route
-		n.payloadUp()
-	default:
-		for _, hm := range data[1:] {
-			n.Log(context, "Nitro.HandlePublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
-			cx.Router.Handle(context, route, hm, cx.Base)
-		}
-	}
-
-	n.Log(context, "Nitro.HandlePublish", "Completed")
-	return netd.OkMessage, false, nil
-}
-
 // HandlePublish handles all publish for different topics.
 func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
 	n.Log(context, "Nitro.HandlePublish", "Started : Data : %+q", data)
@@ -193,10 +160,36 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 	head := data[1]
 
 	switch {
+	case bytes.Equal(head, netd.EndMessage):
+		if !n.payloadMode() {
+			err := errors.New("Invalid Publish payload mode state")
+			n.Error(context, "Nitro.HandleClusterPublish", err, "Completed")
+			return nil, true, err
+		}
+
+		n.payloadDown()
+		croute := n.currentRoute
+		pmb := n.payload.Bytes()
+
+		n.currentRoute = nil
+		n.payload.Reset()
+
+		cx.Router.Handle(context, croute, pmb, cx.Base)
+
+		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
+			n.Error(context, "Nitro.HandlePublish", err, "Completed")
+			return nil, true, err
+		}
+
 	case bytes.Equal(head, netd.BeginMessage):
-		n.payloadType = pub
 		n.currentRoute = route
 		n.payloadUp()
+
+		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
+			n.Error(context, "Nitro.HandlePublish", err, "Completed")
+			return nil, true, err
+		}
+
 	default:
 		for _, hm := range data[1:] {
 			n.Log(context, "Nitro.HandlePublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
@@ -210,6 +203,51 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 	}
 
 	n.Log(context, "Nitro.HandlePublish", "Completed")
+	return netd.OkMessage, false, nil
+}
+
+// HandleClusterPublish handles all publish for different topics.
+func (n *Nitro) HandleClusterPublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleClusterPublish", "Started : Data : %+q", data)
+
+	if len(data) < 2 {
+		err := errors.New("Invalid Data received for publishing")
+		n.Error(context, "Nitro.HandleClusterPublish", err, "Completed")
+		return nil, true, err
+	}
+
+	route := data[0]
+	head := data[1]
+
+	switch {
+	case bytes.Equal(head, netd.EndMessage):
+		if !n.payloadMode() {
+			err := errors.New("Invalid Publish payload mode state")
+			n.Error(context, "Nitro.HandleClusterPublish", err, "Completed")
+			return nil, true, err
+		}
+
+		n.payloadDown()
+		croute := n.currentRoute
+		pmb := n.payload.Bytes()
+
+		n.payload.Reset()
+		n.currentRoute = nil
+
+		cx.Router.Handle(context, croute, pmb, cx.Base)
+
+	case bytes.Equal(head, netd.BeginMessage):
+		n.currentRoute = route
+		n.payloadUp()
+
+	default:
+		for _, hm := range data[1:] {
+			n.Log(context, "Nitro.HandleClusterPublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
+			cx.Router.Handle(context, route, hm, cx.Base)
+		}
+	}
+
+	n.Log(context, "Nitro.HandleClusterPublish", "Completed")
 	return netd.OkMessage, false, nil
 }
 
@@ -229,25 +267,10 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 		return nil, true, err
 	}
 
-	head := data[0]
-
-	switch {
-	case bytes.Equal(head, netd.EndMessage):
-		n.payloadDown()
-		if len(n.currentRoute) > 1 {
-			cx.Router.Handle(context, n.currentRoute, n.payload.Bytes(), cx.Base)
-			n.currentRoute = nil
-			n.payload.Reset()
-		}
-	default:
-		for _, da := range data {
-			n.payload.Write(da)
-		}
-
-		return nil, false, nil
+	for _, da := range data {
+		n.payload.Write(da)
 	}
 
-	if 
 	if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(payload, data...), true); err != nil {
 		n.Error(context, "Nitro.HandlePayload", err, "Completed")
 		return nil, true, err
@@ -396,6 +419,14 @@ func (n *Nitro) HandleCluster(context interface{}, clusters [][]byte, cx *netd.C
 		}
 
 		if err := cx.Clusters.NewCluster(context, addr, port); err != nil {
+			if err == netd.ErrAlreadyConnected {
+				return nil, false, err
+			}
+
+			if err == netd.ErrNoClusterService {
+				return nil, false, err
+			}
+
 			n.Error(context, "Nitro.HandleCluster", err, "Completed")
 			return nil, true, err
 		}

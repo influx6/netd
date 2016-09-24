@@ -305,7 +305,6 @@ func (rl *TCPProvider) readLoop() {
 	rl.lock.Unlock()
 
 	if isCluster && rl.ServerInfo.ConnectInitiator {
-
 		realAddr := fmt.Sprintf("%s:%d", rl.ServerInfo.RealAddr, rl.ServerInfo.RealPort)
 		identityMsg := netd.WrapResponseBlock(netd.IdentityMessage, []byte(rl.ServerInfo.ServerID), []byte(realAddr))
 		clusterReq := netd.WrapResponse(netd.ConnectMessage, []byte(rl.ServerInfo.ServerID))

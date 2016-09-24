@@ -93,7 +93,7 @@ var (
 	InfoMessage = []byte("INFO")
 
 	// IdentityMessage defines the header sent initialialy between clusters to identify themselves.
-	IdentityMessage = []byte("IDENTITY")
+	IdentityMessage = []byte("_IDENTITY")
 
 	// InfoResMessage defines the info header for request connection info.
 	InfoResMessage = []byte("INFORES")
@@ -160,4 +160,15 @@ var (
 	// ErrInvalidClusterFormat defines the error sent when a invalid cluster request
 	// is made.
 	ErrInvalidClusterFormat = errors.New("Invalid Cluster Data, expected {CLUSTER|ADDR|PORT}")
+
+	// ErrSelfRequest is returned when a connection to the cluster itself is received.
+	ErrSelfRequest = errors.New("Incapable of connecting to self")
+
+	// ErrNoClusterService is sent when the server provides no cluster service
+	// for other clusters to connect to.
+	ErrNoClusterService = errors.New("Cluster service available")
+
+	// ErrAlreadyConnected is sent when a connect request is received for a cluster
+	// already within the cluster list.
+	ErrAlreadyConnected = errors.New("Cluster Already Connected")
 )
