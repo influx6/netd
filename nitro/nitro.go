@@ -419,15 +419,12 @@ func (n *Nitro) HandleCluster(context interface{}, clusters [][]byte, cx *netd.C
 		}
 
 		if err := cx.Clusters.NewCluster(context, addr, port); err != nil {
+			n.Error(context, "Nitro.HandleCluster", err, "Completed")
+
 			if err == netd.ErrAlreadyConnected {
 				return nil, false, err
 			}
 
-			if err == netd.ErrNoClusterService {
-				return nil, false, err
-			}
-
-			n.Error(context, "Nitro.HandleCluster", err, "Completed")
 			return nil, true, err
 		}
 	}
@@ -525,10 +522,10 @@ func (n *Nitro) HandleSubscribe(context interface{}, subs [][]byte, cx *netd.Con
    'alarm.ish*' => to be removed from the capture topics published which lies under the 'alarm' topic and contains 'ish'
    'alarm.*ish' => to be removed from the capture topics published which lies under the 'alarm' topic and contains 'ish'
 */
-func (n *Nitro) HandleUnsubscribe(context interface{}, subs [][]byte, cx *netd.Connection) ([]byte, bool, error) {
-	n.Log(context, "Nitro.HandleUnsubscribe", "Started : Subscribing to [%+q]", subs)
+func (n *Nitro) HandleUnsubscribe(context interface{}, submsg [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleUnsubscribe", "Started : Subscribing to [%+q]", submsg)
 
-	for _, sub := range subs {
+	for _, sub := range submsg {
 		if err := cx.Router.Unregister(sub, cx.Subscriber); err != nil {
 			n.Error(context, "Nitro.HandleUnsubscribe", err, "Completed")
 			return nil, false, err
@@ -537,6 +534,24 @@ func (n *Nitro) HandleUnsubscribe(context interface{}, subs [][]byte, cx *netd.C
 
 	n.Log(context, "Nitro.HandleUnsubscribe", "Completed")
 	return netd.WrapResponse(nil, netd.OkMessage), false, nil
+}
+
+// HandleErrors handles error responses from other connections, processing and
+// deciding if need be to process.
+func (n *Nitro) HandleErrors(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleErrors", "Started : Handling Error Message [%+s]", data)
+
+	if len(data) > 1 {
+		return nil, true, errors.New("Expected only one error message")
+	}
+
+	if string(data[0]) == netd.ErrAlreadyConnected.Error() {
+		n.Log(context, "Nitro.HandleErrors", "Info : Received Already Connected error message")
+		return nil, false, nil
+	}
+
+	n.Log(context, "Nitro.HandleErrors", "Completed")
+	return nil, true, nil
 }
 
 // HandleEvents connects to the connection event provider to listening for
@@ -617,6 +632,9 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, payload):
 		return n.HandlePayload(context, message.Data, cx)
 
+	case bytes.Equal(message.Command, netd.ErrMessage):
+		return n.HandleErrors(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.OkMessage):
 		return nil, false, nil
 
@@ -627,9 +645,6 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 		return nil, false, nil
 
 	case bytes.Equal(message.Command, netd.RespMessage):
-		return nil, false, nil
-
-	case bytes.Equal(message.Command, netd.ErrMessage):
 		return nil, false, nil
 
 	default:

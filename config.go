@@ -222,8 +222,8 @@ func (b *BaseInfo) FromMap(info map[string]interface{}) {
 	}
 }
 
-// LocalMatch the provided info with the base info.
-func (b BaseInfo) LocalMatch(info BaseInfo) bool {
+// MatchLocalAddr the provided info with the base info.
+func (b BaseInfo) MatchLocalAddr(info BaseInfo) bool {
 	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.LocalPort == info.Port {
 		return true
 	}
@@ -241,9 +241,18 @@ func (b BaseInfo) LocalMatch(info BaseInfo) bool {
 	return false
 }
 
-// Match the provided info with the base info.
-func (b BaseInfo) Match(info BaseInfo) bool {
+// MatchSignature returns true/false if the info signatures match each other.
+func (b BaseInfo) MatchSignature(info BaseInfo) bool {
+	return (b.ServerID == info.ServerID && b.ClientID == info.ClientID)
+}
+
+// MatchAddr the provided info with the base info.
+func (b BaseInfo) MatchAddr(info BaseInfo) bool {
 	if b.RealAddr == info.Addr && b.RealPort == info.Port {
+		return true
+	}
+
+	if b.RealAddr == info.RealAddr && b.RealPort == info.RealPort {
 		return true
 	}
 
@@ -251,11 +260,12 @@ func (b BaseInfo) Match(info BaseInfo) bool {
 		return true
 	}
 
-	if (b.Addr == "" || b.Addr == "0.0.0.0") && b.Port == info.Port {
-		return true
-	}
-
 	return false
+}
+
+// Match the provided info with the base info.
+func (b BaseInfo) Match(info BaseInfo) bool {
+	return b.MatchAddr(info) || b.MatchSignature(info)
 }
 
 // ID returns a more terse string relating to the given baseinfo.

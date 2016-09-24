@@ -22,7 +22,7 @@ type Connections interface {
 	netd.Connections
 	netd.ClusterConnect
 
-	NewClusterFrom(context interface{}, c net.Conn) error
+	NewClusterFrom(context interface{}, c net.Conn, initiator bool) error
 }
 
 // Connection defines a struct which stores the incoming request for a
@@ -85,25 +85,9 @@ func New(c netd.Config) *TCPConn {
 
 	sid := uuid.New()
 
-	var info netd.BaseInfo
-	info.Addr = c.Addr
-	info.Port = c.Port
-	info.Version = netd.VERSION
-	info.GoVersion = runtime.Version()
-	info.ServerID = sid
-
-	var cinfo netd.BaseInfo
-	cinfo.Addr = c.ClustersAddr
-	cinfo.Port = c.ClustersPort
-	cinfo.Version = netd.VERSION
-	cinfo.GoVersion = runtime.Version()
-	cinfo.ServerID = sid
-
 	var cn TCPConn
 	cn.sid = sid
 	cn.config = c
-	cn.infoTCP = info
-	cn.infoCluster = cinfo
 	cn.router = routes.New(c.Trace)
 	cn.clientEvents = netd.NewBaseEvent()
 	cn.clusterEvents = netd.NewBaseEvent()
@@ -339,7 +323,12 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 
 	ip = strings.TrimSpace(ip)
 	if ip == "" || ip == "::" {
-		ip = "0.0.0.0"
+		if c.config.ClustersAddr == "0.0.0.0" || c.config.ClustersAddr == "" {
+			ip = "127.0.0.1"
+		} else {
+			ip = c.config.ClustersAddr
+
+		}
 	}
 
 	var info netd.BaseInfo
@@ -399,7 +388,11 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 
 	ip = strings.TrimSpace(ip)
 	if ip == "" || ip == "::" {
-		ip = "0.0.0.0"
+		if c.config.ClustersAddr == "0.0.0.0" || c.config.ClustersAddr == "" {
+			ip = "127.0.0.1"
+		} else {
+			ip = c.config.ClustersAddr
+		}
 	}
 
 	var info netd.BaseInfo
@@ -466,10 +459,10 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 	}
 
 	c.config.Log(context, "tcp.NewCluster", "Completed")
-	return c.NewClusterFrom(context, conn)
+	return c.NewClusterFrom(context, conn, true)
 }
 
-func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
+func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn, initiator bool) error {
 	c.config.Log(context, "tcp.NewCusterFrom", "Started : For[%s]", conn.RemoteAddr().String())
 
 	var info netd.BaseInfo
@@ -487,8 +480,8 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 		return err
 	}
 
+	connection.MyInfo.ConnectInitiator = true
 	connection.MyInfo.ClusterNode = true
-	// connection.MyInfo.ConnectInitiator = info.ConnectInitiator
 	connection.MyInfo.HandleReconnect = true
 
 	c.config.Log(context, "tcp.NewClusterFrom", "Created net.Conn : Info[%#v]", connection.MyInfo)
@@ -609,8 +602,6 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 	}
 
 	raddr := connection.RemoteAddr().String()
-	myInfo := connection.MyInfo
-	serverInfo := connection.ServerInfo
 
 	// Listen for the end signal and descrease connection wait group.
 	go func() {
@@ -641,26 +632,28 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		c.clusterEvents.FireDisconnect(provider)
 
 		{
-			var reCount int
-			reWait := netd.DEFAULT_RECONNECT_INTERVAL
+			// myInfo := connection.MyInfo
+			// serverInfo := connection.ServerInfo
+			// 	var reCount int
+			// 	reWait := netd.DEFAULT_RECONNECT_INTERVAL
 
-		reconnectReduce:
-			{
-				if myInfo.ClusterNode && serverInfo.HandleReconnect {
-					if err := c.reconnectHandler(context, myInfo); err != nil {
-						c.config.Error(context, "newClusterConn", err, "Failed Reconnection : Total Time[%s] : Total Retries[%d] : Info[%s]", reWait, reCount, myInfo.ID())
+			// reconnectReduce:
+			// 	{
+			// 		if myInfo.ClusterNode && serverInfo.HandleReconnect {
+			// 			if err := c.reconnectHandler(context, myInfo); err != nil {
+			// 				c.config.Error(context, "newClusterConn", err, "Failed Reconnection : Total Time[%s] : Total Retries[%d] : Info[%s]", reWait, reCount, myInfo.ID())
 
-						reCount++
-						if reCount >= netd.MAX_RECONNECT_COUNT {
-							return
-						}
+			// 				reCount++
+			// 				if reCount >= netd.MAX_RECONNECT_COUNT {
+			// 					return
+			// 				}
 
-						reWait = reWait + netd.DEFAULT_RECONNECT_INTERVAL
-						<-time.After(reWait)
-						goto reconnectReduce
-					}
-				}
-			}
+			// 				reWait = reWait + netd.DEFAULT_RECONNECT_INTERVAL
+			// 				<-time.After(reWait)
+			// 				goto reconnectReduce
+			// 			}
+			// 		}
+			// 	}
 		}
 	}()
 
