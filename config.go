@@ -243,6 +243,10 @@ func (b BaseInfo) LocalMatch(info BaseInfo) bool {
 
 // Match the provided info with the base info.
 func (b BaseInfo) Match(info BaseInfo) bool {
+	if b.RealAddr == info.Addr && b.RealPort == info.Port {
+		return true
+	}
+
 	if b.Addr == info.Addr && b.Port == info.Port {
 		return true
 	}

@@ -61,7 +61,7 @@ const (
 	AUTH_TIMEOUT = float64(2*TLS_TIMEOUT) / float64(time.Second)
 
 	// DEFAULT_RECONNECT_INTERVAL is how often a record gets adjust before trying again.
-	DEFAULT_RECONNECT_INTERVAL = 2 * time.Second
+	DEFAULT_RECONNECT_INTERVAL = 10 * time.Second
 
 	// MAX_RECONNECT_COUNT  is the total maximum reconnection tries which will be done,
 	// where each retry will fold out into a 10 seconds range i.e after 2 seconds each five steps

@@ -166,6 +166,7 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 		n.payloadUp()
 	default:
 		for _, hm := range data[1:] {
+			n.Log(context, "Nitro.HandlePublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
 			cx.Router.Handle(context, route, hm, cx.Base)
 		}
 
@@ -235,11 +236,15 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 	n.Log(context, "Nitro.HandlePayload", "Started : Data : %+q", data)
 
 	if len(data) == 0 {
-		return nil, true, errors.New("Empty data received")
+		err := errors.New("Empty data received")
+		n.Error(context, "Nitro.HandlePayload", err, "Completed")
+		return nil, true, err
 	}
 
 	if !n.payloadMode() {
-		return nil, true, errors.New("Invalid Data collection mode")
+		err := errors.New("Invalid Data collection mode")
+		n.Error(context, "Nitro.HandlePayload", err, "Completed")
+		return nil, true, err
 	}
 
 	head := data[0]
@@ -258,6 +263,11 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 		}
 
 		return nil, false, nil
+	}
+
+	if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(payload, data...), true); err != nil {
+		n.Error(context, "Nitro.HandlePayload", err, "Completed")
+		return nil, true, err
 	}
 
 	n.Log(context, "Nitro.HandlePayload", "Completed")
@@ -332,7 +342,7 @@ func (n *Nitro) HandleConnectResponse(context interface{}, data [][]byte, cx *ne
 			continue
 		}
 
-		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.Addr, cluster.Port)))
+		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.RealAddr, cluster.RealPort)))
 	}
 
 	clreq := netd.WrapResponseBlock(netd.ClustersMessage, []byte(cx.Server.ServerID))
@@ -424,7 +434,6 @@ func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Conn
 	}
 
 	clientID := data[0]
-	// data = data[1:]
 
 	cisd := string(clientID)
 	if n.rcs[cisd] {
@@ -448,7 +457,7 @@ func (n *Nitro) HandleClusters(context interface{}, data [][]byte, cx *netd.Conn
 			continue
 		}
 
-		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.Addr, cluster.Port)))
+		clusterList = append(clusterList, []byte(fmt.Sprintf("%s:%d", cluster.RealAddr, cluster.RealPort)))
 	}
 
 	n.Log(context, "Nitro.HandleClusters", "Completed")

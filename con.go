@@ -192,6 +192,11 @@ func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 			found = true
 			break
 		}
+
+		if info.RealAddr == addr && info.RealPort == port {
+			found = true
+			break
+		}
 	}
 
 	if !found {
@@ -204,7 +209,7 @@ func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 // HasInfo returns true if the info exists within the lists.
 func (s SearchableInfo) HasInfo(target BaseInfo) bool {
 	for _, info := range s {
-		if info.Addr == target.Addr && info.Port == target.Port {
+		if info.Match(target) {
 			return true
 		}
 	}

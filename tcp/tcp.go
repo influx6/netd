@@ -7,6 +7,7 @@ import (
 	"net"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -278,6 +279,7 @@ func (c *TCPConn) SendToClients(context interface{}, id string, msg []byte, flus
 		b = append(b, []byte("Data: "))
 		b = append(b, msg)
 		b = append(b, netd.NewLine)
+
 		c.config.Trace.Begin(context, []byte("SendToClient"))
 		c.config.Trace.Trace(context, bytes.Join(b, []byte("")))
 		c.config.Trace.End(context, []byte("SendToClient"))
@@ -296,7 +298,7 @@ func (c *TCPConn) SendToClients(context interface{}, id string, msg []byte, flus
 
 		for _, ms := range msgs {
 			if err := client.SendMessage(context, ms, flush); err != nil {
-				c.config.Error(context, "SendToClient", err, "Failed to deliver to client : ClientInfo[%s]", client.BaseInfo().String())
+				c.config.Error(context, "SendToClient", err, "Failed to  message block deliver to client : ClientInfo[%s]", client.BaseInfo().String())
 			}
 		}
 
@@ -411,13 +413,19 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 	ip, port, _ := net.SplitHostPort(caddr)
 	iport, _ := strconv.Atoi(port)
 
-	if ip == "" {
+	ip = strings.TrimSpace(ip)
+	if ip == "" || ip == "::" {
 		ip = "0.0.0.0"
 	}
 
 	var info netd.BaseInfo
+	info.Addr = ip
 	info.IP = ip
+	info.RealAddr = ip
+	info.LocalAddr = ip
 	info.Port = iport
+	info.RealPort = iport
+	info.LocalPort = iport
 	info.Version = netd.VERSION
 	info.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	info.GoVersion = runtime.Version()
@@ -465,13 +473,19 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	ip, port, _ := net.SplitHostPort(caddr)
 	iport, _ := strconv.Atoi(port)
 
-	if ip == "" {
+	ip = strings.TrimSpace(ip)
+	if ip == "" || ip == "::" {
 		ip = "0.0.0.0"
 	}
 
 	var info netd.BaseInfo
+	info.Addr = ip
 	info.IP = ip
+	info.RealAddr = ip
+	info.LocalAddr = ip
 	info.Port = iport
+	info.RealPort = iport
+	info.LocalPort = iport
 	info.Version = netd.VERSION
 	info.MaxPayload = netd.MAX_PAYLOAD_SIZE
 	info.GoVersion = runtime.Version()
@@ -502,20 +516,19 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 	}
 	c.mc.Unlock()
 
-	if addr == c.infoCluster.Addr && port == c.infoCluster.Port {
+	if addr == c.infoCluster.RealAddr && port == c.infoCluster.RealPort {
 		err := errors.New("Incapable of connecting to self")
 		c.config.Error(context, "tcp.NewCluster", err, "Completed")
 		return nil
 	}
 
-	if (addr == "" || addr == "0.0.0.0") && port == c.infoCluster.Port {
+	if (addr == "" || addr == "0.0.0.0") && port == c.infoCluster.RealPort {
 		err := errors.New("Incapable of connecting to self")
 		c.config.Error(context, "tcp.NewCluster", err, "Completed")
 		return nil
 	}
 
-	clusters := c.Clusters(context)
-	_, err := clusters.HasAddr(addr, port)
+	_, err := c.Clusters(context).HasAddr(addr, port)
 	if err == nil {
 		c.config.Log(context, "tcp.NewCluster", "Completed : Cluster already connected")
 		return nil
@@ -626,7 +639,7 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 }
 
 func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) error {
-	config := c.config
+	config := connection.Config
 
 	config.Log(context, "tcp.newClusterConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
 
@@ -677,8 +690,6 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		c.mc.Lock()
 		{
 			c.conWG.Done()
-			c.router.Unregister(netd.ClusterRoute, provider)
-
 			clen := len(c.clusters)
 
 			for index, pr := range c.clusters {
@@ -721,13 +732,11 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 				}
 			}
 		}
-
 	}()
 
 	c.mc.Lock()
 	{
 		c.conWG.Add(1)
-		c.router.Register(netd.ClusterRoute, provider)
 		c.clusters = append(c.clusters, provider)
 	}
 	c.mc.Unlock()
@@ -738,7 +747,7 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 }
 
 func (c *TCPConn) newClientConn(context interface{}, connection *Connection) error {
-	config := c.config
+	config := connection.Config
 	config.Log(context, "tcp.newClientConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
 
 	provider, err := c.clientHandler(context, connection)
@@ -849,6 +858,8 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, serverInfo net
 	var connInfo netd.BaseInfo
 	connInfo.Addr = addr
 	connInfo.Port = iport
+	connInfo.RealAddr = addr
+	connInfo.RealPort = iport
 	connInfo.LocalAddr = laddr
 	connInfo.LocalPort = liport
 
@@ -858,9 +869,15 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, serverInfo net
 	connInfo.ServerID = serverInfo.ServerID
 	connInfo.Version = netd.VERSION
 
-	config.Log(context, "tcp.newFromConn", "New Connection : CLient[%#v] : Server[%#v]", connInfo, serverInfo)
+	config.Log(context, "tcp.newFromConn", "New Connection : Server[%#v] : Client[%#v]", serverInfo, connInfo)
 
 	var connection Connection
+	connection.ServerInfo = serverInfo
+	connection.MyInfo = connInfo
+	connection.Config = config
+	connection.Connections = c
+	connection.Stat = stat
+	connection.Router = c.router
 
 	// Check if we are required to be using TLS then try to wrap net.Conn
 	// to tls.Conn.
@@ -889,26 +906,9 @@ func (c *TCPConn) newFromConn(context interface{}, conn net.Conn, serverInfo net
 			return nil, err
 		}
 
-		connection = Connection{
-			MyInfo:      connInfo,
-			ServerInfo:  serverInfo,
-			Conn:        tlsConn,
-			Router:      c.router,
-			Config:      config,
-			Connections: c,
-			Stat:        stat,
-		}
-
+		connection.Conn = tlsConn
 	} else {
-		connection = Connection{
-			MyInfo:      connInfo,
-			ServerInfo:  serverInfo,
-			Conn:        conn,
-			Router:      c.router,
-			Config:      config,
-			Connections: c,
-			Stat:        stat,
-		}
+		connection.Conn = conn
 	}
 
 	return &connection, nil
