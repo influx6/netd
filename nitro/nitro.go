@@ -87,7 +87,7 @@ func (n *Nitro) HandleIdentity(context interface{}, data [][]byte, cx *netd.Conn
 	if len(data) < 2 {
 		err := errors.New("Received invalid identity data: Slice less than 2 in length")
 		n.Error(context, "Nitro.HandleIdentity", err, "Completed")
-		return nil, true, err
+		return nil, true, netd.ErrExistingCluster
 	}
 
 	clusterID := string(data[0])
@@ -97,10 +97,19 @@ func (n *Nitro) HandleIdentity(context interface{}, data [][]byte, cx *netd.Conn
 		return nil, true, err
 	}
 
+	iport, err := strconv.Atoi(port)
+	if err != nil {
+		n.Error(context, "Nitro.HandleIdentity", err, "Completed")
+		return nil, true, err
+	}
+
+	clusters := cx.Clusters(context)
+	if _, err := clusters.HasAddr(addr, iport); err == nil {
+		return nil, true, errors.New("Cluster Already Exists")
+	}
+
 	cx.Base.ServerID = clusterID
 	cx.Base.RealAddr = addr
-
-	iport, _ := strconv.Atoi(port)
 	cx.Base.RealPort = iport
 
 	n.Log(context, "Nitro.HandleIdentity", "Completed")
@@ -174,7 +183,7 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 		n.currentRoute = nil
 		n.payload.Reset()
 
-		cx.Router.Handle(context, croute, pmb, cx.Base)
+		cx.Router.Handle(context, croute, pmb, *cx.Base)
 
 		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
 			n.Error(context, "Nitro.HandlePublish", err, "Completed")
@@ -193,7 +202,7 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 	default:
 		for _, hm := range data[1:] {
 			n.Log(context, "Nitro.HandlePublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
-			cx.Router.Handle(context, route, hm, cx.Base)
+			cx.Router.Handle(context, route, hm, *cx.Base)
 		}
 
 		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
@@ -234,7 +243,7 @@ func (n *Nitro) HandleClusterPublish(context interface{}, data [][]byte, cx *net
 		n.payload.Reset()
 		n.currentRoute = nil
 
-		cx.Router.Handle(context, croute, pmb, cx.Base)
+		cx.Router.Handle(context, croute, pmb, *cx.Base)
 
 	case bytes.Equal(head, netd.BeginMessage):
 		n.currentRoute = route
@@ -243,7 +252,7 @@ func (n *Nitro) HandleClusterPublish(context interface{}, data [][]byte, cx *net
 	default:
 		for _, hm := range data[1:] {
 			n.Log(context, "Nitro.HandleClusterPublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
-			cx.Router.Handle(context, route, hm, cx.Base)
+			cx.Router.Handle(context, route, hm, *cx.Base)
 		}
 	}
 
@@ -418,7 +427,7 @@ func (n *Nitro) HandleCluster(context interface{}, clusters [][]byte, cx *netd.C
 			return nil, true, err
 		}
 
-		if err := cx.Clusters.NewCluster(context, addr, port); err != nil {
+		if err := cx.ClusterConnect.NewCluster(context, addr, port); err != nil {
 			n.Error(context, "Nitro.HandleCluster", err, "Completed")
 
 			if err == netd.ErrAlreadyConnected {

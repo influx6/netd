@@ -432,7 +432,6 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 		c.config.Error(context, "tcp.NewCluster", netd.ErrNoClusterService, "Completed")
 		return netd.ErrNoClusterService
 	}
-	c.mc.Unlock()
 
 	if addr == c.infoCluster.RealAddr && port == c.infoCluster.RealPort {
 		err := errors.New("Incapable of connecting to self")
@@ -514,6 +513,9 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 	{
 		for c.IsRunning() {
 
+			clusterSize := len(c.clusters)
+			clientSize := len(c.clients)
+
 			conn, err := listener.Accept()
 			if err != nil {
 				config.Error(context, "tcp.listenerLoop", err, "Accept Error")
@@ -537,10 +539,22 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 			}
 
 			if isCluster {
+				if clusterSize >= netd.DEFAULT_MAX_CONNECTIONS {
+					config.Error(context, "tcp.listenerLoop", err, "Max Cluster Connection Reached")
+					conn.Close()
+					continue
+				}
+
 				if err := c.newClusterConn(context, connection); err != nil {
 					config.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%s] : Failed Create *Connection", conn.RemoteAddr().String())
 				}
 
+				continue
+			}
+
+			if clientSize >= netd.DEFAULT_MAX_CONNECTIONS {
+				config.Error(context, "tcp.listenerLoop", err, "Max Client Connection Reached")
+				conn.Close()
 				continue
 			}
 

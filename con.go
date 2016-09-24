@@ -81,12 +81,12 @@ type Connection struct {
 	Messager
 	DeferRequest
 
-	Base     *BaseInfo
-	Server   *BaseInfo
-	Router   Router
-	Stat     StatProvider
-	Parser   MessageParser
-	Clusters ClusterConnect
+	Base           *BaseInfo
+	Server         *BaseInfo
+	Router         Router
+	Stat           StatProvider
+	Parser         MessageParser
+	ClusterConnect ClusterConnect
 }
 
 // RequestResponse defines an interface for a provider which handles the

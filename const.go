@@ -171,4 +171,8 @@ var (
 	// ErrAlreadyConnected is sent when a connect request is received for a cluster
 	// already within the cluster list.
 	ErrAlreadyConnected = errors.New("Cluster Already Connected")
+
+	// ErrExistingCluster is sent when a new connection is created and identifies
+	// itself as a previous connected and still connected clusters.
+	ErrExistingCluster = errors.New("Cluster Already Exists")
 )

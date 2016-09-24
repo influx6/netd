@@ -289,15 +289,15 @@ func (rl *TCPProvider) readLoop() {
 
 		// initialize the connection fields with the needed information for
 		// information processors.
-		cx.Clusters = rl
 		cx.Messager = rl
 		cx.Subscriber = rl
-		cx.Base = &(rl.MyInfo)
-		cx.Server = &(rl.ServerInfo)
-		cx.Connections = rl.Connections
 		cx.DeferRequest = rl
 		cx.Router = rl.Router
 		cx.Parser = rl.parser
+		cx.ClusterConnect = rl
+		cx.Base = &(rl.MyInfo)
+		cx.Server = &(rl.ServerInfo)
+		cx.Connections = rl.Connections
 
 		// Initialize the handler for connection events.
 		rl.handler.HandleEvents(context, rl.Events)
