@@ -1,27 +1,164 @@
 package netd
 
 import (
-	"net"
+	"fmt"
 	"sync"
 )
+
+// ClusterConnect defines a interface for handling the cluster connection
+// procedure.
+type ClusterConnect interface {
+	NewCluster(context interface{}, addr string, port int) error
+}
+
+// Connections defines an interface for sending messages to two classes of
+// listeners, which are clients and clusters. This allows a flexible system for
+// expanding more details from a central controller or within a decentral
+// controller.
+type Connections interface {
+	Clients(context interface{}) SearchableInfo
+	Clusters(context interface{}) SearchableInfo
+	SendToClients(context interface{}, id string, msg []byte, flush bool) error
+	SendToClusters(context interface{}, id string, msg []byte, flush bool) error
+}
+
+// DeferRequest defines an interface for defering processing of requests.
+type DeferRequest interface {
+	Defer(context interface{}, msg ...Message) error
+}
+
+// ConnectionEvents defines a interface which defines a connection event
+// propagator.
+type ConnectionEvents interface {
+	OnConnect(fn func(Provider))
+	OnDisconnect(fn func(Provider))
+	FireConnect(Provider)
+	FireDisconnect(Provider)
+}
+
+// SubMessage defines the structure returned to a subscriber once a publish matching
+// its criteria is found.
+type SubMessage struct {
+	Msid    []byte
+	Topic   []byte
+	Match   []byte
+	Params  map[string]string
+	Payload interface{}
+	Source  interface{}
+}
+
+// Subscriber defines an interface for routes to be fired upon when matched.
+type Subscriber interface {
+	Fire(context interface{}, sm *SubMessage) error
+}
 
 // Provider defines a interface for a connection handler, which ensures
 // to manage the request-response cycle of a provided net.Conn.
 type Provider interface {
+	Messager
+	Subscriber
+	DeferRequest
 	BaseInfo() BaseInfo
-	Close(context interface{}) error
-	SendMessage(context interface{}, msg []byte, flush bool) error
 	CloseNotify() chan struct{}
+	Close(context interface{}) error
+	IsClosed() bool
 }
 
-// Broadcast defines an interface for sending messages to two classes of
-// listeners, which are clients and clusters. This allows a flexible system for
-// expanding more details from a central controller or within a decentral
-// controller.
-type Broadcast interface {
-	SendToClients(context interface{}, msg []byte, flush bool) error
-	SendToClusters(context interface{}, msg []byte, flush bool) error
+// Messager defines an interface which exposes methods for sending messages down
+// a connection pipeline.
+type Messager interface {
+	Send(context interface{}, flush bool, msg ...[]byte) error
+	SendError(context interface{}, flush bool, msg ...error) error
+	SendMessage(context interface{}, msg []byte, flush bool) error
+	// SendBlock(context interface{}, flush bool, msg ...[]byte) error
 }
+
+// Connection defines a baselevel struct for storing connection details
+// which provided processors the ability to utilitize the underline connections.
+type Connection struct {
+	Connections
+	Subscriber
+	Messager
+	DeferRequest
+
+	Base     *BaseInfo
+	Server   *BaseInfo
+	Router   Router
+	Stat     StatProvider
+	Parser   MessageParser
+	Clusters ClusterConnect
+}
+
+// RequestResponse defines an interface for a provider which handles the
+// processinging of requests and its response to a provider.
+type RequestResponse interface {
+	HandleEvents(context interface{}, c ConnectionEvents) error
+	HandleFire(context interface{}, msg *SubMessage) ([]byte, error)
+	Process(context interface{}, cx *Connection, msgs ...Message) (bool, error)
+}
+
+// Middlware defines a interface for processing a single Message block.
+type Middleware interface {
+	HandleEvents(context interface{}, c ConnectionEvents) error
+	Handle(context interface{}, m Message, cx *Connection) ([]byte, bool, error)
+}
+
+// Router defines a interface for a route provider which registers subscriptions
+// for specific paths.
+type Router interface {
+	Routes() [][]byte
+	RoutesFor(sub Subscriber) ([][]byte, error)
+	Register(path []byte, sub Subscriber) error
+	Unregister(path []byte, sub Subscriber) error
+	Handle(context interface{}, path []byte, payload interface{}, source interface{})
+}
+
+// NewBaseEvent returns a new instance of a base event.
+func NewBaseEvent() *BaseEvents {
+	var be BaseEvents
+	return &be
+}
+
+// BaseEvents defines a struct which implements the  ConnectionEvents interface.
+type BaseEvents struct {
+	mc            sync.RWMutex
+	onDisconnects []func(Provider)
+	onConnects    []func(Provider)
+}
+
+// OnDisonnect adds a function to be called on a client connection disconnect.
+func (c *BaseEvents) OnDisconnect(fn func(Provider)) {
+	c.mc.Lock()
+	c.onDisconnects = append(c.onDisconnects, fn)
+	c.mc.Unlock()
+}
+
+// OnConnect adds a function to be called on a new client connection.
+func (c *BaseEvents) OnConnect(fn func(Provider)) {
+	c.mc.Lock()
+	c.onConnects = append(c.onConnects, fn)
+	c.mc.Unlock()
+}
+
+// FireConnect passes the provider to all disconnect handlers.
+func (c *BaseEvents) FireDisconnect(p Provider) {
+	c.mc.RLock()
+	for _, cnFN := range c.onDisconnects {
+		cnFN(p)
+	}
+	c.mc.RUnlock()
+}
+
+// FireConnect passes the provider to all connect handlers.
+func (c *BaseEvents) FireConnect(p Provider) {
+	c.mc.RLock()
+	for _, cnFN := range c.onConnects {
+		cnFN(p)
+	}
+	c.mc.RUnlock()
+}
+
+//==============================================================================
 
 // SearchableInfo defines a BaseInfo slice which allows querying specific data
 // from giving info.
@@ -48,10 +185,22 @@ func (s SearchableInfo) GetInfosByIP(ip string) ([]BaseInfo, error) {
 func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 	var info BaseInfo
 
+	var found bool
+
 	for _, info = range s {
-		if info.Addr == addr || info.Port == port {
+		if info.Addr == addr && info.Port == port {
+			found = true
 			break
 		}
+
+		if info.RealAddr == addr && info.RealPort == port {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return BaseInfo{}, fmt.Errorf("Addr: %q Port: %d not found in record", addr, port)
 	}
 
 	return info, nil
@@ -60,47 +209,10 @@ func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 // HasInfo returns true if the info exists within the lists.
 func (s SearchableInfo) HasInfo(target BaseInfo) bool {
 	for _, info := range s {
-		if info.Addr == target.Addr && info.Port == target.Port {
+		if info.Match(target) {
 			return true
 		}
 	}
 
 	return false
-}
-
-// Connections provides a interfae which lists connected clients and clusters.
-type Connections interface {
-	Clients(context interface{}) SearchableInfo
-	OnClientConnect(fn func(Provider))
-	OnClientDisconnect(fn func(Provider))
-
-	Clusters(context interface{}) SearchableInfo
-	OnClusterConnect(fn func(Provider))
-	OnClusterDisconnect(fn func(Provider))
-}
-
-// Connection defines a struct which stores the incoming request for a
-// connection.
-type Connection struct {
-	net.Conn
-	cw             sync.WaitGroup
-	Config         Config
-	ServerInfo     BaseInfo
-	ConnectionInfo BaseInfo
-	Connections    Connections
-	BroadCaster    Broadcast
-	Stat           StatProvider
-}
-
-// Handler defines a function handler which returns a new Provider from a
-// Connection.
-type Handler func(context interface{}, c *Connection) (Provider, error)
-
-// Conn defines an interface which manages the connection creation and accept
-// lifecycle and using the provided ConnHandler produces connections for
-// both clusters and and clients.
-type Conn interface {
-	Broadcast
-	ServeClient(context interface{}, h Handler) error
-	ServeCluster(context interface{}, h Handler) error
 }

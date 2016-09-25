@@ -151,17 +151,6 @@ func NewHTTPServer(l net.Listener, handle http.Handler, c *tls.Config) (*http.Se
 	return s, tl, nil
 }
 
-func isIPInList(list1 []net.IP, list2 []net.IP) bool {
-	for _, ip1 := range list1 {
-		for _, ip2 := range list2 {
-			if ip1.Equal(ip2) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // NewConn returns a tls.Conn object from the provided parameters.
 func NewConn(protocol string, addr string) (net.Conn, error) {
 	newConn, err := net.Dial(protocol, addr)
@@ -340,11 +329,11 @@ func HTTPToConn(srcReq *http.Request, srcRes http.ResponseWriter, dest net.Conn)
 
 //==============================================================================
 
-func getClustersFriends(clusterPort int, routes []*url.URL) ([]*url.URL, error) {
+func GetClustersFriends(clusterPort int, routes []*url.URL) ([]*url.URL, error) {
 	var cleanRoutes []*url.URL
 	cport := strconv.Itoa(clusterPort)
 
-	selfIPs, err := getInterfaceIPs()
+	selfIPs, err := GetInterfaceIPs()
 	if err != nil {
 		return nil, err
 	}
@@ -355,12 +344,12 @@ func getClustersFriends(clusterPort int, routes []*url.URL) ([]*url.URL, error) 
 			return nil, err
 		}
 
-		ips, err := getURLIP(host)
+		ips, err := GetURLIP(host)
 		if err != nil {
 			return nil, err
 		}
 
-		if cport == port && isIPInList(selfIPs, ips) {
+		if cport == port && IsIPInList(selfIPs, ips) {
 			continue
 		}
 
@@ -370,7 +359,18 @@ func getClustersFriends(clusterPort int, routes []*url.URL) ([]*url.URL, error) 
 	return cleanRoutes, nil
 }
 
-func getURLIP(ipStr string) ([]net.IP, error) {
+func IsIPInList(list1 []net.IP, list2 []net.IP) bool {
+	for _, ip1 := range list1 {
+		for _, ip2 := range list2 {
+			if ip1.Equal(ip2) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func GetURLIP(ipStr string) ([]net.IP, error) {
 	ipList := []net.IP{}
 
 	ip := net.ParseIP(ipStr)
@@ -394,7 +394,7 @@ func getURLIP(ipStr string) ([]net.IP, error) {
 	return ipList, nil
 }
 
-func getInterfaceIPs() ([]net.IP, error) {
+func GetInterfaceIPs() ([]net.IP, error) {
 	var localIPs []net.IP
 
 	interfaceAddr, err := net.InterfaceAddrs()
