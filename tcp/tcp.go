@@ -432,6 +432,7 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 		c.config.Error(context, "tcp.NewCluster", netd.ErrNoClusterService, "Completed")
 		return netd.ErrNoClusterService
 	}
+	c.mc.Unlock()
 
 	if addr == c.infoCluster.RealAddr && port == c.infoCluster.RealPort {
 		err := errors.New("Incapable of connecting to self")
@@ -646,28 +647,28 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		c.clusterEvents.FireDisconnect(provider)
 
 		{
-			// myInfo := connection.MyInfo
-			// serverInfo := connection.ServerInfo
-			// 	var reCount int
-			// 	reWait := netd.DEFAULT_RECONNECT_INTERVAL
+			myInfo := connection.MyInfo
+			serverInfo := connection.ServerInfo
+			var reCount int
+			reWait := netd.DEFAULT_RECONNECT_INTERVAL
 
-			// reconnectReduce:
-			// 	{
-			// 		if myInfo.ClusterNode && serverInfo.HandleReconnect {
-			// 			if err := c.reconnectHandler(context, myInfo); err != nil {
-			// 				c.config.Error(context, "newClusterConn", err, "Failed Reconnection : Total Time[%s] : Total Retries[%d] : Info[%s]", reWait, reCount, myInfo.ID())
+		reconnectReduce:
+			{
+				if !myInfo.ExitedNormaly && myInfo.ClusterNode && serverInfo.ConnectInitiator && serverInfo.HandleReconnect {
+					if err := c.reconnectHandler(context, myInfo); err != nil {
+						c.config.Error(context, "newClusterConn", err, "Failed Reconnection : Total Time[%s] : Total Retries[%d] : Info[%s]", reWait, reCount, myInfo.ID())
 
-			// 				reCount++
-			// 				if reCount >= netd.MAX_RECONNECT_COUNT {
-			// 					return
-			// 				}
+						reCount++
+						if reCount >= netd.MAX_RECONNECT_COUNT {
+							return
+						}
 
-			// 				reWait = reWait + netd.DEFAULT_RECONNECT_INTERVAL
-			// 				<-time.After(reWait)
-			// 				goto reconnectReduce
-			// 			}
-			// 		}
-			// 	}
+						reWait = reWait + netd.DEFAULT_RECONNECT_INTERVAL
+						<-time.After(reWait)
+						goto reconnectReduce
+					}
+				}
+			}
 		}
 	}()
 

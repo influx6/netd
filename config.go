@@ -165,6 +165,7 @@ type BaseInfo struct {
 	ClusterNode      bool   `json:"cluster_node"`
 	ConnectInitiator bool   `json:"-"`
 	HandleReconnect  bool   `json:"-"`
+	ExitedNormaly    bool   `json:"-"`
 }
 
 // FromMap collects the  needed information for the baseInfo from the provided map.

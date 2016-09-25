@@ -56,6 +56,8 @@ var (
 	batchd      = []byte("+BATCHD")
 	sub         = []byte("SUB")
 	subs        = []byte("SUBS")
+	listtopics  = []byte("LISTTOPICS")
+	topics      = []byte("TOPICS")
 	unsub       = []byte("UNSUB")
 	pub         = []byte("PUB")
 	clusterpub  = []byte("_CPUB")
@@ -495,6 +497,18 @@ func (n *Nitro) HandleSubscriptions(context interface{}, data [][]byte, cx *netd
 	return netd.WrapResponse(sub, netd.WrapBlockParts(routes)), false, nil
 }
 
+// HandleListTopicsRequest handles the LISTTOPICS request received from any client
+// returning the topic lists alone. This defers from the SUBS request which returns
+// the response in a SUB scription command. Use mainly for information only.
+func (n *Nitro) HandleListTopicsRequest(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleSubscriptions", "Started")
+
+	routes := cx.Router.Routes()
+
+	n.Log(context, "Nitro.HandleSubscription", "Completed")
+	return netd.WrapResponse(topics, netd.WrapBlockParts(routes)), false, nil
+}
+
 // HandleUnsubscribe handles all subscription to different topics.
 /* We expect topics to be in the forms of the following:
 
@@ -629,6 +643,9 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, subs):
 		return n.HandleSubscriptions(context, message.Data, cx)
 
+	case bytes.Equal(message.Command, listtopics):
+		return n.HandleListTopicsRequest(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.IdentityMessage):
 		return n.HandleIdentity(context, message.Data, cx)
 
@@ -647,7 +664,11 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, netd.OkMessage):
 		return nil, false, nil
 
+	case bytes.Equal(message.Command, topics):
+		return nil, false, nil
+
 	case bytes.Equal(message.Command, exit):
+		cx.Base.ExitedNormaly = true
 		return netd.OkMessage, true, nil
 
 	case bytes.Equal(message.Command, netd.InfoResMessage):

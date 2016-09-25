@@ -131,11 +131,7 @@ func (bp *TCPProvider) Fire(context interface{}, msg *netd.SubMessage) error {
 		return err
 	}
 
-	if src.ClientID == bp.MyInfo.ClientID {
-		bp.Config.Log(context, "Fire", "Completed")
-		return nil
-	}
-
+	bp.Config.Log(context, "Fire", "Info : Publish Source %q : In Server %q", src.ClientID, src.ServerID)
 	bu, err := bp.handler.HandleFire(context, msg)
 	if err != nil {
 		bp.Config.Error(context, "Fire", err, "Completed")
