@@ -22,7 +22,7 @@ type Connections interface {
 	netd.Connections
 	netd.ClusterConnect
 
-	NewClusterFrom(context interface{}, c net.Conn) error
+	NewClusterFrom(context interface{}, c net.Conn, initiator bool) error
 }
 
 // Connection defines a struct which stores the incoming request for a
@@ -85,25 +85,9 @@ func New(c netd.Config) *TCPConn {
 
 	sid := uuid.New()
 
-	var info netd.BaseInfo
-	info.Addr = c.Addr
-	info.Port = c.Port
-	info.Version = netd.VERSION
-	info.GoVersion = runtime.Version()
-	info.ServerID = sid
-
-	var cinfo netd.BaseInfo
-	cinfo.Addr = c.ClustersAddr
-	cinfo.Port = c.ClustersPort
-	cinfo.Version = netd.VERSION
-	cinfo.GoVersion = runtime.Version()
-	cinfo.ServerID = sid
-
 	var cn TCPConn
 	cn.sid = sid
 	cn.config = c
-	cn.infoTCP = info
-	cn.infoCluster = cinfo
 	cn.router = routes.New(c.Trace)
 	cn.clientEvents = netd.NewBaseEvent()
 	cn.clusterEvents = netd.NewBaseEvent()
@@ -339,7 +323,12 @@ func (c *TCPConn) ServeClusters(context interface{}, h Handler) error {
 
 	ip = strings.TrimSpace(ip)
 	if ip == "" || ip == "::" {
-		ip = "0.0.0.0"
+		if c.config.ClustersAddr == "0.0.0.0" || c.config.ClustersAddr == "" {
+			ip = "127.0.0.1"
+		} else {
+			ip = c.config.ClustersAddr
+
+		}
 	}
 
 	var info netd.BaseInfo
@@ -399,7 +388,11 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 
 	ip = strings.TrimSpace(ip)
 	if ip == "" || ip == "::" {
-		ip = "0.0.0.0"
+		if c.config.ClustersAddr == "0.0.0.0" || c.config.ClustersAddr == "" {
+			ip = "127.0.0.1"
+		} else {
+			ip = c.config.ClustersAddr
+		}
 	}
 
 	var info netd.BaseInfo
@@ -426,6 +419,8 @@ func (c *TCPConn) ServeClients(context interface{}, h Handler) error {
 	return nil
 }
 
+//==============================================================================
+
 // NewCluster creates a new connnection to a giving cluster addr and port, returning
 // an error if the operation failed.
 func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
@@ -434,31 +429,27 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 	c.mc.Lock()
 	if !c.runningCluster {
 		c.mc.Unlock()
-		err := errors.New("No clustering currently")
-		c.config.Error(context, "tcp.NewCluster", err, "Completed")
-		return err
+		c.config.Error(context, "tcp.NewCluster", netd.ErrNoClusterService, "Completed")
+		return netd.ErrNoClusterService
 	}
 	c.mc.Unlock()
 
 	if addr == c.infoCluster.RealAddr && port == c.infoCluster.RealPort {
 		err := errors.New("Incapable of connecting to self")
 		c.config.Error(context, "tcp.NewCluster", err, "Completed")
-		return nil
+		return netd.ErrSelfRequest
 	}
 
 	if (addr == "" || addr == "0.0.0.0") && port == c.infoCluster.RealPort {
-		err := errors.New("Incapable of connecting to self")
-		c.config.Error(context, "tcp.NewCluster", err, "Completed")
-		return nil
+		c.config.Error(context, "tcp.NewCluster", netd.ErrSelfRequest, "Completed")
+		return netd.ErrSelfRequest
 	}
 
 	_, err := c.Clusters(context).HasAddr(addr, port)
 	if err == nil {
-		c.config.Log(context, "tcp.NewCluster", "Completed : Cluster already connected")
-		return nil
+		c.config.Error(context, "tcp.NewCluster", netd.ErrAlreadyConnected, "Completed")
+		return netd.ErrAlreadyConnected
 	}
-
-	// c.config.Log(context, "tcp.NewCluster", "Info : Found : %s", cm.String())
 
 	caddr := net.JoinHostPort(addr, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", caddr, netd.DEFAULT_DIAL_TIMEOUT)
@@ -468,10 +459,10 @@ func (c *TCPConn) NewCluster(context interface{}, addr string, port int) error {
 	}
 
 	c.config.Log(context, "tcp.NewCluster", "Completed")
-	return c.NewClusterFrom(context, conn)
+	return c.NewClusterFrom(context, conn, true)
 }
 
-func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
+func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn, initiator bool) error {
 	c.config.Log(context, "tcp.NewCusterFrom", "Started : For[%s]", conn.RemoteAddr().String())
 
 	var info netd.BaseInfo
@@ -489,8 +480,8 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 		return err
 	}
 
+	connection.MyInfo.ConnectInitiator = true
 	connection.MyInfo.ClusterNode = true
-	// connection.MyInfo.ConnectInitiator = info.ConnectInitiator
 	connection.MyInfo.HandleReconnect = true
 
 	c.config.Log(context, "tcp.NewClusterFrom", "Created net.Conn : Info[%#v]", connection.MyInfo)
@@ -503,6 +494,8 @@ func (c *TCPConn) NewClusterFrom(context interface{}, conn net.Conn) error {
 	c.config.Log(context, "tcp.NewCusterFrom", "Completed")
 	return nil
 }
+
+//==============================================================================
 
 func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net.Listener, info netd.BaseInfo, h Handler) {
 	c.config.Log(context, "tcp.listenerLoop", "Started")
@@ -520,6 +513,9 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 
 	{
 		for c.IsRunning() {
+
+			clusterSize := len(c.clusters)
+			clientSize := len(c.clients)
 
 			conn, err := listener.Accept()
 			if err != nil {
@@ -544,10 +540,22 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 			}
 
 			if isCluster {
+				if clusterSize >= netd.DEFAULT_MAX_CONNECTIONS {
+					config.Error(context, "tcp.listenerLoop", err, "Max Cluster Connection Reached")
+					conn.Close()
+					continue
+				}
+
 				if err := c.newClusterConn(context, connection); err != nil {
 					config.Error(context, "tcp.listenerLoop", err, "New Connection : Addr[%s] : Failed Create *Connection", conn.RemoteAddr().String())
 				}
 
+				continue
+			}
+
+			if clientSize >= netd.DEFAULT_MAX_CONNECTIONS {
+				config.Error(context, "tcp.listenerLoop", err, "Max Client Connection Reached")
+				conn.Close()
 				continue
 			}
 
@@ -564,6 +572,12 @@ func (c *TCPConn) listenerLoop(context interface{}, isCluster bool, listener net
 
 func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) error {
 	config := connection.Config
+
+	clusters := c.Clusters(context)
+	if clusters.HasInfo(connection.MyInfo) {
+		config.Error(context, "tcp.newClusterConn", netd.ErrAlreadyConnected, "New Connection : Addr[%a] : Failed Provider Creation", connection.RemoteAddr().String())
+		return netd.ErrAlreadyConnected
+	}
 
 	config.Log(context, "tcp.newClusterConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
 
@@ -603,8 +617,6 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 	}
 
 	raddr := connection.RemoteAddr().String()
-	myInfo := connection.MyInfo
-	serverInfo := connection.ServerInfo
 
 	// Listen for the end signal and descrease connection wait group.
 	go func() {
@@ -635,12 +647,14 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 		c.clusterEvents.FireDisconnect(provider)
 
 		{
+			myInfo := connection.MyInfo
+			serverInfo := connection.ServerInfo
 			var reCount int
 			reWait := netd.DEFAULT_RECONNECT_INTERVAL
 
 		reconnectReduce:
 			{
-				if myInfo.ClusterNode && serverInfo.HandleReconnect {
+				if !myInfo.ExitedNormaly && myInfo.ClusterNode && serverInfo.ConnectInitiator && serverInfo.HandleReconnect {
 					if err := c.reconnectHandler(context, myInfo); err != nil {
 						c.config.Error(context, "newClusterConn", err, "Failed Reconnection : Total Time[%s] : Total Retries[%d] : Info[%s]", reWait, reCount, myInfo.ID())
 
@@ -672,6 +686,13 @@ func (c *TCPConn) newClusterConn(context interface{}, connection *Connection) er
 
 func (c *TCPConn) newClientConn(context interface{}, connection *Connection) error {
 	config := connection.Config
+
+	clients := c.Clients(context)
+	if clients.HasInfo(connection.MyInfo) {
+		config.Error(context, "tcp.newClientConn", netd.ErrAlreadyConnected, "New Connection : Addr[%a] : Failed Provider Creation", connection.RemoteAddr().String())
+		return netd.ErrAlreadyConnected
+	}
+
 	config.Log(context, "tcp.newClientConn", "Creating Provider for Addr[%+s] ", connection.RemoteAddr().String())
 
 	provider, err := c.clientHandler(context, connection)

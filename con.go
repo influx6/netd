@@ -81,12 +81,12 @@ type Connection struct {
 	Messager
 	DeferRequest
 
-	Base     *BaseInfo
-	Server   *BaseInfo
-	Router   Router
-	Stat     StatProvider
-	Parser   MessageParser
-	Clusters ClusterConnect
+	Base           *BaseInfo
+	Server         *BaseInfo
+	Router         Router
+	Stat           StatProvider
+	Parser         MessageParser
+	ClusterConnect ClusterConnect
 }
 
 // RequestResponse defines an interface for a provider which handles the
@@ -188,12 +188,12 @@ func (s SearchableInfo) HasAddr(addr string, port int) (BaseInfo, error) {
 	var found bool
 
 	for _, info = range s {
-		if info.Addr == addr && info.Port == port {
+		if info.RealAddr == addr && info.RealPort == port {
 			found = true
 			break
 		}
 
-		if info.RealAddr == addr && info.RealPort == port {
+		if info.Addr == addr && info.Port == port {
 			found = true
 			break
 		}

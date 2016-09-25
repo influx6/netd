@@ -131,11 +131,7 @@ func (bp *TCPProvider) Fire(context interface{}, msg *netd.SubMessage) error {
 		return err
 	}
 
-	if src.ClientID == bp.MyInfo.ClientID {
-		bp.Config.Log(context, "Fire", "Completed")
-		return nil
-	}
-
+	bp.Config.Log(context, "Fire", "Info : Publish Source %q : In Server %q", src.ClientID, src.ServerID)
 	bu, err := bp.handler.HandleFire(context, msg)
 	if err != nil {
 		bp.Config.Error(context, "Fire", err, "Completed")
@@ -289,15 +285,15 @@ func (rl *TCPProvider) readLoop() {
 
 		// initialize the connection fields with the needed information for
 		// information processors.
-		cx.Clusters = rl
 		cx.Messager = rl
 		cx.Subscriber = rl
-		cx.Base = &(rl.MyInfo)
-		cx.Server = &(rl.ServerInfo)
-		cx.Connections = rl.Connections
 		cx.DeferRequest = rl
 		cx.Router = rl.Router
 		cx.Parser = rl.parser
+		cx.ClusterConnect = rl
+		cx.Base = &(rl.MyInfo)
+		cx.Server = &(rl.ServerInfo)
+		cx.Connections = rl.Connections
 
 		// Initialize the handler for connection events.
 		rl.handler.HandleEvents(context, rl.Events)
@@ -305,14 +301,13 @@ func (rl *TCPProvider) readLoop() {
 	rl.lock.Unlock()
 
 	if isCluster && rl.ServerInfo.ConnectInitiator {
-
 		realAddr := fmt.Sprintf("%s:%d", rl.ServerInfo.RealAddr, rl.ServerInfo.RealPort)
 		identityMsg := netd.WrapResponseBlock(netd.IdentityMessage, []byte(rl.ServerInfo.ServerID), []byte(realAddr))
 		clusterReq := netd.WrapResponse(netd.ConnectMessage, []byte(rl.ServerInfo.ServerID))
 
 		if err := rl.Send(context, true, netd.WrapResponse(nil, identityMsg, clusterReq)); err != nil {
 			rl.Config.Error(context, "ReadLoop", err, "Completed")
-			rl.SendError(context, true, fmt.Errorf("Error negotiating with  netd.ClusterMessage: %s", err.Error()))
+			rl.SendError(context, true, err)
 			rl.waiter.Done()
 			rl.Close(context)
 			return
@@ -337,7 +332,7 @@ func (rl *TCPProvider) readLoop() {
 			if rl.scratchPad != nil {
 				doClose, err := rl.beginScratchProcedure(context, &cx)
 				if err != nil {
-					rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+					rl.SendError(context, true, err)
 				}
 
 				// If we are expected to kill the connection after this error then
@@ -364,14 +359,14 @@ func (rl *TCPProvider) readLoop() {
 			// Parse current block of data.
 			messages, err := rl.parser.Parse(block[:n])
 			if err != nil {
-				rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+				rl.SendError(context, true, err)
 				go rl.Close(context)
 				break loopRunner
 			}
 
 			doClose, err := rl.handler.Process(context, &cx, messages...)
 			if err != nil {
-				rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+				rl.SendError(context, true, err)
 			}
 
 			// If we are expected to kill the connection after this error then
@@ -401,7 +396,7 @@ func (rl *TCPProvider) beginScratchProcedure(context interface{}, cx *netd.Conne
 	doClose, err := rl.handler.Process(context, cx, rl.scratchPad...)
 	if err != nil {
 		rl.Config.Error(context, "beginScratchProcedure", err, "Completed")
-		rl.SendError(context, true, fmt.Errorf("Error reading from client: %s", err.Error()))
+		rl.SendError(context, true, err)
 		rl.Close(context)
 		rl.scratchPad = nil
 		return doClose, err

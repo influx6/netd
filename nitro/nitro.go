@@ -56,9 +56,11 @@ var (
 	batchd      = []byte("+BATCHD")
 	sub         = []byte("SUB")
 	subs        = []byte("SUBS")
+	listtopics  = []byte("LISTTOPICS")
+	topics      = []byte("TOPICS")
 	unsub       = []byte("UNSUB")
 	pub         = []byte("PUB")
-	clusterpub  = []byte("CPUB")
+	clusterpub  = []byte("_CPUB")
 	exit        = []byte("EXIT")
 	pingMessage = []byte("PING")
 	pongMessage = []byte("P0NG")
@@ -72,12 +74,9 @@ type Nitro struct {
 	netd.Logger
 	netd.Trace
 
-	Next    netd.Middleware
-	payload bytes.Buffer
-	payloadType []byte
-
+	Next         netd.Middleware
+	payload      bytes.Buffer
 	currentRoute []byte
-	currentMsgr  []byte
 
 	rcs map[string]bool
 	pn  int64
@@ -90,7 +89,7 @@ func (n *Nitro) HandleIdentity(context interface{}, data [][]byte, cx *netd.Conn
 	if len(data) < 2 {
 		err := errors.New("Received invalid identity data: Slice less than 2 in length")
 		n.Error(context, "Nitro.HandleIdentity", err, "Completed")
-		return nil, true, err
+		return nil, true, netd.ErrExistingCluster
 	}
 
 	clusterID := string(data[0])
@@ -100,10 +99,19 @@ func (n *Nitro) HandleIdentity(context interface{}, data [][]byte, cx *netd.Conn
 		return nil, true, err
 	}
 
+	iport, err := strconv.Atoi(port)
+	if err != nil {
+		n.Error(context, "Nitro.HandleIdentity", err, "Completed")
+		return nil, true, err
+	}
+
+	clusters := cx.Clusters(context)
+	if _, err := clusters.HasAddr(addr, iport); err == nil {
+		return nil, true, errors.New("Cluster Already Exists")
+	}
+
 	cx.Base.ServerID = clusterID
 	cx.Base.RealAddr = addr
-
-	iport, _ := strconv.Atoi(port)
 	cx.Base.RealPort = iport
 
 	n.Log(context, "Nitro.HandleIdentity", "Completed")
@@ -149,36 +157,6 @@ func (n *Nitro) HandleData(context interface{}, data [][]byte, cx *netd.Connecti
 	return netd.OkMessage, false, nil
 }
 
-// HandleClusterPublish handles all publish for different topics to clusters.
-func (n *Nitro) HandleClusterPublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
-	n.Log(context, "Nitro.HandlePublish", "Started : Data : %+q", data)
-
-	if len(data) < 2 {
-		err := errors.New("Invalid cluster publish data received for publishing")
-		n.Error(context, "Nitro.HandlePublish", err, "Completed")
-		return nil, true, err
-	}
-
-
-	route := data[0]
-	head := data[1]
-
-	switch {
-	case bytes.Equal(head, netd.BeginMessage):
-		n.payloadType = clusterpub
-		n.currentRoute = route
-		n.payloadUp()
-	default:
-		for _, hm := range data[1:] {
-			n.Log(context, "Nitro.HandlePublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
-			cx.Router.Handle(context, route, hm, cx.Base)
-		}
-	}
-
-	n.Log(context, "Nitro.HandlePublish", "Completed")
-	return netd.OkMessage, false, nil
-}
-
 // HandlePublish handles all publish for different topics.
 func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
 	n.Log(context, "Nitro.HandlePublish", "Started : Data : %+q", data)
@@ -193,14 +171,40 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 	head := data[1]
 
 	switch {
+	case bytes.Equal(head, netd.EndMessage):
+		if !n.payloadMode() {
+			err := errors.New("Invalid Publish payload mode state")
+			n.Error(context, "Nitro.HandleClusterPublish", err, "Completed")
+			return nil, true, err
+		}
+
+		n.payloadDown()
+		croute := n.currentRoute
+		pmb := n.payload.Bytes()
+
+		n.currentRoute = nil
+		n.payload.Reset()
+
+		cx.Router.Handle(context, croute, pmb, *cx.Base)
+
+		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
+			n.Error(context, "Nitro.HandlePublish", err, "Completed")
+			return nil, true, err
+		}
+
 	case bytes.Equal(head, netd.BeginMessage):
-		n.payloadType = pub
 		n.currentRoute = route
 		n.payloadUp()
+
+		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
+			n.Error(context, "Nitro.HandlePublish", err, "Completed")
+			return nil, true, err
+		}
+
 	default:
 		for _, hm := range data[1:] {
 			n.Log(context, "Nitro.HandlePublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
-			cx.Router.Handle(context, route, hm, cx.Base)
+			cx.Router.Handle(context, route, hm, *cx.Base)
 		}
 
 		if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(clusterpub, data...), true); err != nil {
@@ -210,6 +214,51 @@ func (n *Nitro) HandlePublish(context interface{}, data [][]byte, cx *netd.Conne
 	}
 
 	n.Log(context, "Nitro.HandlePublish", "Completed")
+	return netd.OkMessage, false, nil
+}
+
+// HandleClusterPublish handles all publish for different topics.
+func (n *Nitro) HandleClusterPublish(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleClusterPublish", "Started : Data : %+q", data)
+
+	if len(data) < 2 {
+		err := errors.New("Invalid Data received for publishing")
+		n.Error(context, "Nitro.HandleClusterPublish", err, "Completed")
+		return nil, true, err
+	}
+
+	route := data[0]
+	head := data[1]
+
+	switch {
+	case bytes.Equal(head, netd.EndMessage):
+		if !n.payloadMode() {
+			err := errors.New("Invalid Publish payload mode state")
+			n.Error(context, "Nitro.HandleClusterPublish", err, "Completed")
+			return nil, true, err
+		}
+
+		n.payloadDown()
+		croute := n.currentRoute
+		pmb := n.payload.Bytes()
+
+		n.payload.Reset()
+		n.currentRoute = nil
+
+		cx.Router.Handle(context, croute, pmb, *cx.Base)
+
+	case bytes.Equal(head, netd.BeginMessage):
+		n.currentRoute = route
+		n.payloadUp()
+
+	default:
+		for _, hm := range data[1:] {
+			n.Log(context, "Nitro.HandleClusterPublish", "Routing : Topic[%+s] : Message[%+s]", route, hm)
+			cx.Router.Handle(context, route, hm, *cx.Base)
+		}
+	}
+
+	n.Log(context, "Nitro.HandleClusterPublish", "Completed")
 	return netd.OkMessage, false, nil
 }
 
@@ -229,25 +278,10 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 		return nil, true, err
 	}
 
-	head := data[0]
-
-	switch {
-	case bytes.Equal(head, netd.EndMessage):
-		n.payloadDown()
-		if len(n.currentRoute) > 1 {
-			cx.Router.Handle(context, n.currentRoute, n.payload.Bytes(), cx.Base)
-			n.currentRoute = nil
-			n.payload.Reset()
-		}
-	default:
-		for _, da := range data {
-			n.payload.Write(da)
-		}
-
-		return nil, false, nil
+	for _, da := range data {
+		n.payload.Write(da)
 	}
 
-	if 
 	if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(payload, data...), true); err != nil {
 		n.Error(context, "Nitro.HandlePayload", err, "Completed")
 		return nil, true, err
@@ -395,8 +429,13 @@ func (n *Nitro) HandleCluster(context interface{}, clusters [][]byte, cx *netd.C
 			return nil, true, err
 		}
 
-		if err := cx.Clusters.NewCluster(context, addr, port); err != nil {
+		if err := cx.ClusterConnect.NewCluster(context, addr, port); err != nil {
 			n.Error(context, "Nitro.HandleCluster", err, "Completed")
+
+			if err == netd.ErrAlreadyConnected {
+				return nil, false, err
+			}
+
 			return nil, true, err
 		}
 	}
@@ -458,6 +497,18 @@ func (n *Nitro) HandleSubscriptions(context interface{}, data [][]byte, cx *netd
 	return netd.WrapResponse(sub, netd.WrapBlockParts(routes)), false, nil
 }
 
+// HandleListTopicsRequest handles the LISTTOPICS request received from any client
+// returning the topic lists alone. This defers from the SUBS request which returns
+// the response in a SUB scription command. Use mainly for information only.
+func (n *Nitro) HandleListTopicsRequest(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleSubscriptions", "Started")
+
+	routes := cx.Router.Routes()
+
+	n.Log(context, "Nitro.HandleSubscription", "Completed")
+	return netd.WrapResponse(topics, netd.WrapBlockParts(routes)), false, nil
+}
+
 // HandleUnsubscribe handles all subscription to different topics.
 /* We expect topics to be in the forms of the following:
 
@@ -494,10 +545,10 @@ func (n *Nitro) HandleSubscribe(context interface{}, subs [][]byte, cx *netd.Con
    'alarm.ish*' => to be removed from the capture topics published which lies under the 'alarm' topic and contains 'ish'
    'alarm.*ish' => to be removed from the capture topics published which lies under the 'alarm' topic and contains 'ish'
 */
-func (n *Nitro) HandleUnsubscribe(context interface{}, subs [][]byte, cx *netd.Connection) ([]byte, bool, error) {
-	n.Log(context, "Nitro.HandleUnsubscribe", "Started : Subscribing to [%+q]", subs)
+func (n *Nitro) HandleUnsubscribe(context interface{}, submsg [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleUnsubscribe", "Started : Subscribing to [%+q]", submsg)
 
-	for _, sub := range subs {
+	for _, sub := range submsg {
 		if err := cx.Router.Unregister(sub, cx.Subscriber); err != nil {
 			n.Error(context, "Nitro.HandleUnsubscribe", err, "Completed")
 			return nil, false, err
@@ -506,6 +557,24 @@ func (n *Nitro) HandleUnsubscribe(context interface{}, subs [][]byte, cx *netd.C
 
 	n.Log(context, "Nitro.HandleUnsubscribe", "Completed")
 	return netd.WrapResponse(nil, netd.OkMessage), false, nil
+}
+
+// HandleErrors handles error responses from other connections, processing and
+// deciding if need be to process.
+func (n *Nitro) HandleErrors(context interface{}, data [][]byte, cx *netd.Connection) ([]byte, bool, error) {
+	n.Log(context, "Nitro.HandleErrors", "Started : Handling Error Message [%+s]", data)
+
+	if len(data) > 1 {
+		return nil, true, errors.New("Expected only one error message")
+	}
+
+	if string(data[0]) == netd.ErrAlreadyConnected.Error() {
+		n.Log(context, "Nitro.HandleErrors", "Info : Received Already Connected error message")
+		return nil, false, nil
+	}
+
+	n.Log(context, "Nitro.HandleErrors", "Completed")
+	return nil, true, nil
 }
 
 // HandleEvents connects to the connection event provider to listening for
@@ -574,6 +643,9 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, subs):
 		return n.HandleSubscriptions(context, message.Data, cx)
 
+	case bytes.Equal(message.Command, listtopics):
+		return n.HandleListTopicsRequest(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.IdentityMessage):
 		return n.HandleIdentity(context, message.Data, cx)
 
@@ -586,19 +658,23 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, payload):
 		return n.HandlePayload(context, message.Data, cx)
 
+	case bytes.Equal(message.Command, netd.ErrMessage):
+		return n.HandleErrors(context, message.Data, cx)
+
 	case bytes.Equal(message.Command, netd.OkMessage):
 		return nil, false, nil
 
+	case bytes.Equal(message.Command, topics):
+		return nil, false, nil
+
 	case bytes.Equal(message.Command, exit):
+		cx.Base.ExitedNormaly = true
 		return netd.OkMessage, true, nil
 
 	case bytes.Equal(message.Command, netd.InfoResMessage):
 		return nil, false, nil
 
 	case bytes.Equal(message.Command, netd.RespMessage):
-		return nil, false, nil
-
-	case bytes.Equal(message.Command, netd.ErrMessage):
 		return nil, false, nil
 
 	default:
