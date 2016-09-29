@@ -4,3 +4,5 @@ package records
 // processor for a RECORD message format that allows clients to send efficient record/model transactions
 // over the wire.
 type RecordWM struct{}
+
+func (RecordWM) HandleEvents()
