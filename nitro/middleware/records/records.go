@@ -2,7 +2,15 @@ package records
 
 import "github.com/influx6/netd"
 
+// Record defines a generic interface which defines the underline record type received.
+type Record interface{}
+
+// Cache defines the interface for all cache items which will be used in the caching record values.
 type Cache interface {
+      Exists(recordID string) bool
+      Put(recordId string, Record ) error
+      Replace(recordId string, Record ) error
+      Get(recordId string) (Record, error)
 }
 
 // RecordMW is a struct which implements the netd.Middleware interface. It provides a new message
