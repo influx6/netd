@@ -296,7 +296,14 @@ func (rl *TCPProvider) readLoop() {
 		cx.Connections = rl.Connections
 
 		// Initialize the handler for connection events.
-		rl.handler.HandleEvents(context, rl.Events)
+		if err := rl.handler.HandleEvents(context, rl.Events); err != nil {
+			rl.lock.Unlock()
+			rl.Config.Error(context, "ReadLoop", err, "Completed")
+			rl.SendError(context, true, err)
+			rl.waiter.Done()
+			rl.Close(context)
+			return
+		}
 	}
 	rl.lock.Unlock()
 

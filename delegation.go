@@ -59,16 +59,21 @@ type ActionHandle func(context interface{}, data Message, cx *Connection) ([]byt
 // incoming data. Behaviours are strict in that for a series of linked actions
 // the paths that leads to them are unique and can not diverge into other behaviours.
 type Delegation interface {
+	Middleware
 	With(...Action) Delegation
 	Next(actionName string, d Delegation) Delegation
 	Action(actionName string, action ActionHandle) Delegation
 	Delegate(actionName string, d Delegation, m ...MessageMorpher) Delegation
-	Handle(context interface{}, msg Message, cx *Connection) ([]byte, bool, error)
 }
 
+// EventHandler defines a function type for which which be called to register
+// event listeners for connect and disconnect actions.
+type EventHandler func(context interface{}, c ConnectionEvents) error
+
 // NewDelegation returns a new instance of a structure implementing the Delegation interface.
-func NewDelegation() Delegation {
+func NewDelegation(eh ...EventHandler) Delegation {
 	var d delegate
+	d.events = append(d.events, eh...)
 	return &d
 }
 
@@ -88,6 +93,7 @@ func WrapAsAction(actionName string, d Delegation, morpher MessageMorpher) Actio
 
 type delegate struct {
 	actions []Action
+	events  []EventHandler
 }
 
 // Next calls the Delegation.Delegate method but provides the NextCommand as a message morpher.
@@ -102,6 +108,8 @@ func (bh *delegate) Next(actionName string, delegation Delegation) Delegation {
 // NOTE: Though a variadic list is used for the MessageMorpher only the first is used/picked, this is done
 // for convenience purposes.
 func (bh *delegate) Delegate(actionName string, delegation Delegation, mo ...MessageMorpher) Delegation {
+	bh.events = append(bh.events, delegation.HandleEvents)
+
 	if mo != nil {
 		return bh.With(WrapAsAction(actionName, delegation, mo[0]))
 	}
@@ -138,6 +146,18 @@ func (bh *delegate) Handle(context interface{}, data Message, cx *Connection) ([
 	}
 
 	return nil, true, ErrActionNotFound
+}
+
+// HandleEvents calls all internal event handlers to register their event registration
+// with the provided ConnectionEvents.
+func (bh *delegate) HandleEvents(context interface{}, cx ConnectionEvents) error {
+	for _, handle := range bh.events {
+		if err := handle(context, cx); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 //================================================================================================
