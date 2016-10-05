@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"strconv"
-	"strings"
 
 	"github.com/influx6/netd"
 	"github.com/influx6/netd/middleware/records/types"
@@ -31,6 +29,10 @@ var (
 	// records are required to have a always incrementing version to reduce and
 	// ensure consistency in transformations and operations on records.
 	ErrVersionConflict = errors.New("Record versions are in conflict unable to perform operation")
+
+	// ErrInvalidDeltaRecord is returned when the giving record provided ends up
+	// being not a delta record type, indicated by the IsDelta flag/field.
+	ErrInvalidDeltaRecord = errors.New("Record has no deltas")
 
 	// RecordResponseMessage is used to send a reply back to the requestee after
 	// processing the needed requests.
@@ -483,14 +485,78 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		// If we are not dealing with Delta Records then we must not service the
+		// request.
+		if len(rec.Record.Deltas) == 0 {
+			logger.Error(context, "RecordMW.PATCH", ErrInvalidDeltaRecord, "Completed")
+			return nil, true, ErrInvalidDeltaRecord
+		}
+
+		var err error
+		var cacheRecord types.Record
+
 		if cache.Exists(rec.Record.ID) {
-			if err := cache.Delete(rec.Record.ID); err != nil {
+
+			cacheRecord, err = cache.Get(rec.Record.ID)
+			if err != nil {
+
+				// If we are not able to get the details out of the cache, then
+				// get it from the backend then replace in cache and retry.
+				cacheRecord, err = backend.Get(rec.Record.ID)
+				if err != nil {
+					logger.Error(context, "RecordMW.PATCH", err, "Completed")
+					return nil, true, err
+				}
+
+				if err := cache.Replace(cacheRecord); err != nil {
+					logger.Error(context, "RecordMW.PATCH", err, "Completed")
+					return nil, true, err
+				}
+			}
+
+		} else {
+
+			// If we do not have record in cache, then retrieve and add into cache.
+			// Then call cache.Patch and store the new record if no error into
+			// backend.
+			cacheRecord, err = backend.Get(rec.Record.ID)
+			if err != nil {
 				logger.Error(context, "RecordMW.PATCH", err, "Completed")
 				return nil, true, err
 			}
+
+			if err := cache.Put(cacheRecord); err != nil {
+				logger.Error(context, "RecordMW.PATCH", err, "Completed")
+				return nil, true, err
+			}
+
 		}
 
-		var responseJSON []byte
+		patchedRecord, err := cache.Patch(cacheRecord)
+		if err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		if err := backend.Update(cacheRecord); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		responseJSON, err := json.Marshal(&types.BaseRecord{
+			Status:       true,
+			Record:       patchedRecord,
+			Processed:    true,
+			ServerID:     cx.Base.ServerID,
+			ClientID:     cx.Base.ClientID,
+			FromClientID: rec.FromClientID,
+			FromServerID: rec.FromServerID,
+		})
+
+		if err != nil {
+			logger.Error(context, "RecordMW.READ", err, "Completed")
+			return nil, true, err
+		}
 
 		logger.Log(context, "RecordMW.PATCH", "Completed")
 		return netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON), false, nil
@@ -505,84 +571,3 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 }
 
 //==============================================================================
-
-var (
-	arrayStarter  = []byte("[")
-	arrayEnd      = []byte("]")
-	objectStarter = []byte("{")
-	objectEnd     = []byte("}")
-)
-
-func isArrayJSON(b []byte) bool {
-	return bytes.HasPrefix(b, arrayStarter) && bytes.HasSuffix(b, arrayEnd)
-}
-
-func isObjectJSON(b []byte) bool {
-	return bytes.HasPrefix(b, objectStarter) && bytes.HasSuffix(b, objectEnd)
-}
-
-//==============================================================================
-
-func patchWithPaths(patcher types.Record, record types.Record) error {
-	if !patcher.IsDelta {
-		return errors.New("Patcher record is not a delta")
-	}
-
-	for keys, value := range patcher.Data {
-		keys := strings.Split(keys, ".")
-
-	}
-
-	return nil
-}
-
-func root(target interface{}, ks []string) (interface{}, bool) {
-	if len(ks) == 0 {
-		return target, true
-	}
-
-	key := ks[0]
-
-	intKey, err := strconv.Atoi(key)
-	if err == nil {
-		switch boTarget := target.(type) {
-		case []int:
-			return boTarget[intKey], true
-		case []uint8:
-			return boTarget[intKey], true
-		case []uint64:
-			return boTarget[intKey], true
-		case []uint32:
-			return boTarget[intKey], true
-		case []uint16:
-			return boTarget[intKey], true
-		case []float64:
-			return boTarget[intKey], true
-		case []float32:
-			return boTarget[intKey], true
-		case []string:
-			return boTarget[intKey], true
-		case []interface{}:
-			return boTarget[intKey], true
-		}
-
-		return nil, false
-	}
-
-	switch mdl := target.(type) {
-
-	case map[string]interface{}:
-		return root(mdl, ks[1:])
-
-	case map[string]string:
-		remKey := ks[1:]
-		if len(remKey) > 1 {
-			return nil, false
-		}
-
-		val, ok := mdl[ks[1]]
-		return val, ok
-	}
-
-	return nil, false
-}
