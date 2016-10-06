@@ -31,6 +31,7 @@ type Backend interface {
 // Delta defines a base level data store which contains a replace/add instruction
 // for a Record.
 type Delta struct {
+	ID       string `json:"id,omitempty"`
 	Path     string `json:"path"`
 	NewValue string `json:"new_value"`
 }
