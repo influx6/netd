@@ -36,7 +36,7 @@ var (
 
 	// RecordResponseMessage is used to send a reply back to the requestee after
 	// processing the needed requests.
-	RecordResponseMessage = []byte("RecordResponse")
+	RecordResponseMessage = []byte("RECORDRES")
 
 	// CreateMessage defines the header name for create requests.
 	CreateMessage = []byte("CREATE")
@@ -65,13 +65,14 @@ type bufferRecord struct {
 // It provides a new message processor for a RECORD message format that allows
 // clients to send efficient record/model transactions over the wire.
 func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, cache types.Cache, backend types.Backend, ev ...netd.EventHandler) netd.Delegation {
-	du := netd.NewDelegation()
 
 	var createBuffer bufferRecord
 	var replaceBuffer bufferRecord
 	var deleteBuffer bufferRecord
 	var readBuffer bufferRecord
 	var patchBuffer bufferRecord
+
+	du := netd.NewDelegation()
 
 	// CREATE handles all create requests from the backend to create a record.
 	du.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
@@ -116,16 +117,37 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		data := createBuffer.bu.Bytes()
 		createBuffer.bu.Reset()
 
-		var rec types.BaseRecord
+		var rec types.BaseRequest
 		if err := json.Unmarshal(data, &rec); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
+		}
+
+		if err := versions.Validate(rec.Record.Version); err != nil {
 			logger.Error(context, "RecordMW.CREATE", err, "Completed")
 			return nil, true, err
 		}
 
 		// Check if record already exists in cache, if so then these means its violated
 		// new record policy for create.
-		if cache.Exists(rec.Record.ID) {
+		if cache.Exists(rec.Record.Name, rec.Record.ID) {
 			logger.Error(context, "RecordMW.CREATE", ErrRecordExists, "Completed")
+			return nil, true, ErrRecordExists
+		}
+
+		if backend.Exists(rec.Record.Name, rec.Record.ID) {
+
+			rec, err := backend.Get(rec.Record.Name, rec.Record.ID)
+			if err != nil {
+				logger.Error(context, "RecordMW.CREATE", err, "Completed")
+				return nil, true, err
+			}
+
+			if err := cache.Put(rec); err != nil {
+				logger.Error(context, "RecordMW.CREATE", err, "Completed")
+				return nil, true, err
+			}
+
 			return nil, true, ErrRecordExists
 		}
 
@@ -142,8 +164,33 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		responseJSON, err := json.Marshal(&types.BaseResponse{
+			Status:    true,
+			Processed: true,
+			Record:    rec.Record,
+			ClientID:  cx.Base.ClientID,
+			ServerID:  cx.Base.ServerID,
+		})
+
+		if err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Record.Name),
+			bytes.ToLower(CreateMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, CreateMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Failed to send to clusters")
+		}
+
 		logger.Log(context, "RecordMW.CREATE", "Completed")
-		return netd.OkMessage, false, nil
+		return res, false, nil
 	})
 
 	// REPLACE handles all replace requests from the backend to create a record.
@@ -189,42 +236,73 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		data := replaceBuffer.bu.Bytes()
 		replaceBuffer.bu.Reset()
 
-		var rec types.BaseRecord
+		var rec types.BaseRequest
 		if err := json.Unmarshal(data, &rec); err != nil {
 			logger.Error(context, "RecordMW.REPLACE", err, "Completed")
 			return nil, true, err
 		}
 
-		if cache.Exists(rec.Record.ID) {
-			if err := cache.Delete(rec.Record.ID); err != nil {
+		// Validate the version of the record request if it matches the standard for our
+		// versioner.
+		if err := versions.Validate(rec.Record.Version); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
+		}
+
+		var err error
+		var oldRecord types.Record
+
+		if cache.Exists(rec.Record.Name, rec.Record.ID) {
+
+			oldRecord, err = cache.Get(rec.Record.Name, rec.Record.ID)
+			if err != nil {
 				logger.Error(context, "RecordMW.REPLACE", err, "Completed")
 				return nil, true, err
 			}
+
+		} else {
+
+			if !backend.Exists(rec.Record.Name, rec.Record.ID) {
+				return nil, true, ErrNoRecordFound
+			}
+
+			oldRecord, err = backend.Get(rec.Record.Name, rec.Record.ID)
+			if err != nil {
+				logger.Error(context, "RecordMW.REPLACE", err, "Completed")
+				return nil, true, err
+			}
+
+		}
+
+		// Request the version of the OldRecord be tested against the new record request
+		// if the versions are equal or the new request is older than the current version then
+		// can not allow this operation to continue.
+		if err := versions.Test(oldRecord.Version, rec.Record.Version); err != nil {
+			logger.Error(context, "RecordMW.REPLACE", err, "Completed")
+			return nil, true, err
 		}
 
 		// Store record in backend and if error'd out then return err and close
 		// connection.
-		oldRec, err := backend.Delete(rec.Record.ID)
+		newRecord, err := backend.Update(rec.Record)
 		if err != nil {
 			logger.Error(context, "RecordMW.REPLACE", err, "Completed")
 			return nil, true, err
 		}
 
 		// Store record in cache for quick access.
-		if err := cache.Put(rec.Record); err != nil {
+		if err := cache.Replace(newRecord); err != nil {
 			logger.Error(context, "RecordMW.REPLACE", err, "Completed")
 			return nil, true, err
 		}
 
-		responseJSON, err := json.Marshal(&types.ReplaceRecord{
-			Status:       true,
-			Processed:    true,
-			Old:          oldRec,
-			New:          rec.Record,
-			ClientID:     cx.Base.ClientID,
-			ServerID:     cx.Base.ServerID,
-			FromClientID: rec.FromClientID,
-			FromServerID: rec.FromServerID,
+		responseJSON, err := json.Marshal(&types.ReplaceResponse{
+			Status:    true,
+			Processed: true,
+			Old:       oldRecord,
+			New:       newRecord,
+			ClientID:  cx.Base.ClientID,
+			ServerID:  cx.Base.ServerID,
 		})
 
 		if err != nil {
@@ -232,8 +310,20 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Record.Name),
+			bytes.ToLower(ReplaceMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.REPLACE", err, "Failed to send to clusters")
+		}
+
 		logger.Log(context, "RecordMW.REPLACE", "Completed")
-		return netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON), false, nil
+		return res, false, nil
 	})
 
 	// DELETE handles all replace requests from the backend to create a record.
@@ -279,50 +369,75 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		data := deleteBuffer.bu.Bytes()
 		deleteBuffer.bu.Reset()
 
-		var rec types.DeleteRecord
+		var rec types.DeleteRequest
 		if err := json.Unmarshal(data, &rec); err != nil {
 			logger.Error(context, "RecordMW.DELETE", err, "Completed")
 			return nil, true, err
 		}
 
+		// Validate the version of the record request if it matches the standard for our
+		// versioner.
+		if err := versions.Validate(rec.Version); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
+		}
+
 		var foundInCache bool
-		var record types.Record
+		if cache.Exists(rec.Name, rec.DeleteID) {
 
-		if cache.Exists(rec.DeleteID) {
-
-			cacheRec, err := cache.Get(rec.DeleteID)
+			cacheRec, err := cache.Get(rec.Name, rec.DeleteID)
 			if err != nil {
 				logger.Error(context, "RecordMW.DELETE", err, "Completed")
 				return nil, true, err
 			}
 
-			record = cacheRec
+			// Request the version of the OldRecord be tested against the new record request
+			// if the versions are equal or the new request is older than the current version then
+			// can not allow this operation to continue.
+			if err := versions.Test(cacheRec.Version, rec.Version); err != nil {
+				logger.Error(context, "RecordMW.Delete", err, "Completed")
+				return nil, true, err
+			}
+
 			foundInCache = true
 
-			if err := cache.Delete(rec.DeleteID); err != nil {
+		} else {
+
+			cacheRec, err := backend.Get(rec.Name, rec.DeleteID)
+			if err != nil {
 				logger.Error(context, "RecordMW.DELETE", err, "Completed")
 				return nil, true, err
 			}
+
+			// Request the version of the OldRecord be tested against the new record request
+			// if the versions are equal or the new request is older than the current version then
+			// can not allow this operation to continue.
+			if err := versions.Test(cacheRec.Version, rec.Version); err != nil {
+				logger.Error(context, "RecordMW.Delete", err, "Completed")
+				return nil, true, err
+			}
+
 		}
 
-		backendRec, err := backend.Delete(rec.DeleteID)
+		backendRec, err := backend.Delete(rec.Name, rec.DeleteID)
 		if err != nil {
 			logger.Error(context, "RecordMW.DELETE", err, "Info : Delete Failed for ID[%s]", rec.DeleteID)
 			return nil, true, err
 		}
 
-		if !foundInCache {
-			record = backendRec
+		if foundInCache {
+			if err := cache.Delete(rec.Name, rec.DeleteID); err != nil {
+				logger.Error(context, "RecordMW.DELETE", err, "Completed")
+				return nil, true, err
+			}
 		}
 
-		responseJSON, err := json.Marshal(&types.BaseRecord{
-			Status:       true,
-			Processed:    true,
-			Record:       record,
-			ClientID:     cx.Base.ClientID,
-			ServerID:     cx.Base.ServerID,
-			FromClientID: rec.FromClientID,
-			FromServerID: rec.FromServerID,
+		responseJSON, err := json.Marshal(&types.BaseResponse{
+			Status:    true,
+			Processed: true,
+			Record:    backendRec,
+			ClientID:  cx.Base.ClientID,
+			ServerID:  cx.Base.ServerID,
 		})
 
 		if err != nil {
@@ -330,8 +445,20 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Name),
+			bytes.ToLower(DeleteMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, DeleteMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.DELETE", err, "Failed to send to clusters")
+		}
+
 		logger.Log(context, "RecordMW.DELETE", "Completed")
-		return netd.WrapResponseBlock(RecordResponseMessage, DeleteMessage, responseJSON), false, nil
+		return res, false, nil
 	})
 
 	// GET/READ handles all read requests from the backend to create a record.
@@ -377,52 +504,48 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		data := readBuffer.bu.Bytes()
 		readBuffer.bu.Reset()
 
-		var rec types.ReadRecord
+		var rec types.ReadRequest
 		if err := json.Unmarshal(data, &rec); err != nil {
 			logger.Error(context, "RecordMW.READ", err, "Completed")
 			return nil, true, err
 		}
 
-		var records types.BaseRecords
+		var records []types.BaseResponse
 
 		for _, id := range rec.Records {
 			var status bool
 
-			if cache.Exists(id) {
+			if cache.Exists(rec.Name, id) {
 
-				record, err := cache.Get(id)
+				record, err := cache.Get(rec.Name, id)
 				if err == nil {
 					status = true
 				}
 
-				records = append(records, types.BaseRecord{
-					Status:       status,
-					Record:       record,
-					Processed:    true,
-					Error:        err.Error(),
-					ServerID:     cx.Base.ServerID,
-					ClientID:     cx.Base.ClientID,
-					FromClientID: rec.FromClientID,
-					FromServerID: rec.FromServerID,
+				records = append(records, types.BaseResponse{
+					Status:    status,
+					Record:    record,
+					Processed: true,
+					Error:     err.Error(),
+					ServerID:  cx.Base.ServerID,
+					ClientID:  cx.Base.ClientID,
 				})
 
 				continue
 			}
 
-			record, err := backend.Get(id)
+			record, err := backend.Get(rec.Name, id)
 			if err == nil {
 				status = true
 			}
 
-			records = append(records, types.BaseRecord{
-				Status:       status,
-				Record:       record,
-				Processed:    true,
-				Error:        err.Error(),
-				ServerID:     cx.Base.ServerID,
-				ClientID:     cx.Base.ClientID,
-				FromClientID: rec.FromClientID,
-				FromServerID: rec.FromServerID,
+			records = append(records, types.BaseResponse{
+				Status:    status,
+				Record:    record,
+				Processed: true,
+				Error:     err.Error(),
+				ServerID:  cx.Base.ServerID,
+				ClientID:  cx.Base.ClientID,
 			})
 		}
 
@@ -432,8 +555,20 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Name),
+			bytes.ToLower(DeleteMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReadMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.READ", err, "Failed to send to clusters")
+		}
+
 		logger.Log(context, "RecordMW.READ", "Completed")
-		return netd.WrapResponseBlock(RecordResponseMessage, ReadMessage, responseJSON), false, nil
+		return res, false, nil
 	})
 
 	// PATCH handles all patch requests from the backend to patch/update a record.
@@ -479,7 +614,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		data := patchBuffer.bu.Bytes()
 		patchBuffer.bu.Reset()
 
-		var rec types.BaseRecord
+		var rec types.DeltaRequest
 		if err := json.Unmarshal(data, &rec); err != nil {
 			logger.Error(context, "RecordMW.PATCH", err, "Completed")
 			return nil, true, err
@@ -487,22 +622,29 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 
 		// If we are not dealing with Delta Records then we must not service the
 		// request.
-		if len(rec.Record.Deltas) == 0 {
+		if len(rec.Deltas) == 0 {
 			logger.Error(context, "RecordMW.PATCH", ErrInvalidDeltaRecord, "Completed")
 			return nil, true, ErrInvalidDeltaRecord
+		}
+
+		// Validate the version of the record request if it matches the standard for our
+		// versioner.
+		if err := versions.Validate(rec.Version); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
 		}
 
 		var err error
 		var cacheRecord types.Record
 
-		if cache.Exists(rec.Record.ID) {
+		if cache.Exists(rec.Name, rec.ID) {
 
-			cacheRecord, err = cache.Get(rec.Record.ID)
+			cacheRecord, err = cache.Get(rec.Name, rec.ID)
 			if err != nil {
 
 				// If we are not able to get the details out of the cache, then
 				// get it from the backend then replace in cache and retry.
-				cacheRecord, err = backend.Get(rec.Record.ID)
+				cacheRecord, err = backend.Get(rec.Name, rec.ID)
 				if err != nil {
 					logger.Error(context, "RecordMW.PATCH", err, "Completed")
 					return nil, true, err
@@ -519,7 +661,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			// If we do not have record in cache, then retrieve and add into cache.
 			// Then call cache.Patch and store the new record if no error into
 			// backend.
-			cacheRecord, err = backend.Get(rec.Record.ID)
+			cacheRecord, err = backend.Get(rec.Name, rec.ID)
 			if err != nil {
 				logger.Error(context, "RecordMW.PATCH", err, "Completed")
 				return nil, true, err
@@ -532,42 +674,65 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 
 		}
 
-		patchedRecord, err := cache.Patch(cacheRecord)
+		if err := versions.Test(cacheRecord.Version, rec.Version); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		patchedRecord, err := cache.Patch(rec)
 		if err != nil {
 			logger.Error(context, "RecordMW.PATCH", err, "Completed")
 			return nil, true, err
 		}
 
-		if err := backend.Update(cacheRecord); err != nil {
+		if _, err := backend.Update(patchedRecord); err != nil {
 			logger.Error(context, "RecordMW.PATCH", err, "Completed")
 			return nil, true, err
 		}
 
-		responseJSON, err := json.Marshal(&types.BaseRecord{
-			Status:       true,
-			Record:       patchedRecord,
-			Processed:    true,
-			ServerID:     cx.Base.ServerID,
-			ClientID:     cx.Base.ClientID,
-			FromClientID: rec.FromClientID,
-			FromServerID: rec.FromServerID,
+		if err := cache.Replace(patchedRecord); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		responseJSON, err := json.Marshal(&types.BaseResponse{
+			Status:    true,
+			Record:    patchedRecord,
+			Processed: true,
+			ServerID:  cx.Base.ServerID,
+			ClientID:  cx.Base.ClientID,
 		})
 
 		if err != nil {
-			logger.Error(context, "RecordMW.READ", err, "Completed")
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
 			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Name),
+			bytes.ToLower(PatchMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Failed to send to clusters")
 		}
 
 		logger.Log(context, "RecordMW.PATCH", "Completed")
-		return netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON), false, nil
+		return res, false, nil
 	})
+
+	des := netd.NewDelegation()
+	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
+	des.Action("UPDATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
+	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
+	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
 
 	return netd.NewDelegation(ev...).
 		Next("RECORDS", du).
-		Action(string(RecordResponseMessage), func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
-
-			return nil, false, nil
-		})
+		Next("RECORDRES", dres).
 }
 
 //==============================================================================
