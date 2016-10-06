@@ -30,6 +30,10 @@ var (
 	// ensure consistency in transformations and operations on records.
 	ErrVersionConflict = errors.New("Record versions are in conflict unable to perform operation")
 
+	// ErrInvalidDeltaRecord is returned when the giving record provided ends up
+	// being not a delta record type, indicated by the IsDelta flag/field.
+	ErrInvalidDeltaRecord = errors.New("Record has no deltas")
+
 	// RecordResponseMessage is used to send a reply back to the requestee after
 	// processing the needed requests.
 	RecordResponseMessage = []byte("RecordResponse")
@@ -481,14 +485,78 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		// If we are not dealing with Delta Records then we must not service the
+		// request.
+		if len(rec.Record.Deltas) == 0 {
+			logger.Error(context, "RecordMW.PATCH", ErrInvalidDeltaRecord, "Completed")
+			return nil, true, ErrInvalidDeltaRecord
+		}
+
+		var err error
+		var cacheRecord types.Record
+
 		if cache.Exists(rec.Record.ID) {
-			if err := cache.Delete(rec.Record.ID); err != nil {
+
+			cacheRecord, err = cache.Get(rec.Record.ID)
+			if err != nil {
+
+				// If we are not able to get the details out of the cache, then
+				// get it from the backend then replace in cache and retry.
+				cacheRecord, err = backend.Get(rec.Record.ID)
+				if err != nil {
+					logger.Error(context, "RecordMW.PATCH", err, "Completed")
+					return nil, true, err
+				}
+
+				if err := cache.Replace(cacheRecord); err != nil {
+					logger.Error(context, "RecordMW.PATCH", err, "Completed")
+					return nil, true, err
+				}
+			}
+
+		} else {
+
+			// If we do not have record in cache, then retrieve and add into cache.
+			// Then call cache.Patch and store the new record if no error into
+			// backend.
+			cacheRecord, err = backend.Get(rec.Record.ID)
+			if err != nil {
 				logger.Error(context, "RecordMW.PATCH", err, "Completed")
 				return nil, true, err
 			}
+
+			if err := cache.Put(cacheRecord); err != nil {
+				logger.Error(context, "RecordMW.PATCH", err, "Completed")
+				return nil, true, err
+			}
+
 		}
 
-		var responseJSON []byte
+		patchedRecord, err := cache.Patch(cacheRecord)
+		if err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		if err := backend.Update(cacheRecord); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		responseJSON, err := json.Marshal(&types.BaseRecord{
+			Status:       true,
+			Record:       patchedRecord,
+			Processed:    true,
+			ServerID:     cx.Base.ServerID,
+			ClientID:     cx.Base.ClientID,
+			FromClientID: rec.FromClientID,
+			FromServerID: rec.FromServerID,
+		})
+
+		if err != nil {
+			logger.Error(context, "RecordMW.READ", err, "Completed")
+			return nil, true, err
+		}
 
 		logger.Log(context, "RecordMW.PATCH", "Completed")
 		return netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON), false, nil

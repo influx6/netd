@@ -14,6 +14,7 @@ type Cache interface {
 	Delete(string) error
 	Replace(Record) error
 	Get(string) (Record, error)
+	Patch(delta Record) (Record, error)
 }
 
 // Backend defines an interface which allows exposing a front through which records
@@ -27,14 +28,22 @@ type Backend interface {
 	Delete(string) (Record, error)
 }
 
+// Delta defines a base level data store which contains a replace/add instruction
+// for a Record.
+type Delta struct {
+	ID       string `json:"id,omitempty"`
+	Path     string `json:"path"`
+	NewValue string `json:"new_value"`
+}
+
 // Record defines a generic interface which defines the underline record type received.
 type Record struct {
-	IsDelta bool                   `json:"is_delta"`
 	Version string                 `json:"version"`
 	ID      string                 `json:"record_id"`
 	Name    string                 `json:"record_name"`
 	Deleted bool                   `json:"deleted"`
 	Data    map[string]interface{} `json:"record_data"`
+	Deltas  []Delta                `json:"deltas,omitempty"`
 }
 
 // BaseRecord defines the response/request recieved for a specific operation.
