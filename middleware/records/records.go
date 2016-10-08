@@ -64,7 +64,7 @@ type bufferRecord struct {
 // RecordMW returns a delegation which implements the netd.Middleware interface.
 // It provides a new message processor for a RECORD message format that allows
 // clients to send efficient record/model transactions over the wire.
-func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, cache types.Cache, backend types.Backend, ev ...netd.EventHandler) netd.Delegation {
+func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, cache types.Cache, deltas types.Deltas, backend types.Backend, ev ...netd.EventHandler) netd.Delegation {
 
 	var createBuffer bufferRecord
 	var replaceBuffer bufferRecord
@@ -510,6 +510,13 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
+		// Validate the version of the record request if it matches the standard for our
+		// versioner.
+		if err := versions.Validate(rec.Version); err != nil {
+			logger.Error(context, "RecordMW.READ", err, "Completed")
+			return nil, true, err
+		}
+
 		var records []types.BaseResponse
 
 		for _, id := range rec.Records {
@@ -568,6 +575,212 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		}
 
 		logger.Log(context, "RecordMW.READ", "Completed")
+		return res, false, nil
+	})
+
+	// READPATHS handles all patch requests from the backend to patch/update a record.
+	du.Action("READPATHS", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
+		logger.Log(context, "RecordMW.READPATHS", "Started : Message[%+q]", m)
+
+		if len(m.Data) == 0 {
+			logger.Error(context, "RecordMW.READPATHS", netd.ErrEmptyData, "Completed")
+			return nil, true, netd.ErrEmptyData
+		}
+
+		switch {
+		case bytes.Equal(m.Data[0], netd.BeginMessage):
+			patchBuffer.on = true
+			for _, mdata := range m.Data[1:] {
+				patchBuffer.bu.Write(mdata)
+			}
+
+			logger.Log(context, "RecordMW.READPATHS", "Completed")
+			return netd.OkMessage, false, nil
+
+		case bytes.Equal(m.Data[0], netd.PayloadMessage):
+			for _, mdata := range m.Data[1:] {
+				patchBuffer.bu.Write(mdata)
+			}
+
+			logger.Log(context, "RecordMW.READPATHS", "Completed")
+			return netd.OkMessage, false, nil
+
+		case bytes.Equal(m.Data[0], netd.EndMessage):
+			if !patchBuffer.on {
+				logger.Error(context, "RecordMW.READPATHS", ErrInvalidPayloadState, "Completed")
+				return nil, true, ErrInvalidPayloadState
+			}
+
+			patchBuffer.on = false
+		default:
+			for _, mdata := range m.Data {
+				patchBuffer.bu.Write(mdata)
+			}
+		}
+
+		data := patchBuffer.bu.Bytes()
+		patchBuffer.bu.Reset()
+
+		var rec types.DeltaReadRequest
+		if err := json.Unmarshal(data, &rec); err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			return nil, true, err
+		}
+
+		// If we are not dealing with Delta Records then we must not service the
+		// request.
+		if len(rec.Deltas) == 0 {
+			logger.Error(context, "RecordMW.READPATHS", ErrInvalidDeltaRecord, "Completed")
+			return nil, true, ErrInvalidDeltaRecord
+		}
+
+		// Validate the version of the record request if it matches the standard for our
+		// versioner.
+		if err := versions.Validate(rec.Version); err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			return nil, true, err
+		}
+
+		var err error
+		var records []types.BaseResponse
+
+		for _, id := range rec.Records {
+
+			if !cache.Exists(rec.Name, id) {
+
+				// If we are not able to get the details out of the cache, then
+				// get it from the backend then replace in cache and retry.
+				cacheRecord, err := backend.Get(rec.Name, id)
+				if err != nil {
+					logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+					return nil, true, err
+				}
+
+				if err := cache.Put(cacheRecord); err != nil {
+					logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+					return nil, true, err
+				}
+
+			}
+
+			status := true
+			pr, err := cache.GetPaths(rec.Name, id, rec.Deltas)
+			if err != nil {
+				status = false
+				logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			}
+
+			records = append(records, types.BaseResponse{
+				Status:    status,
+				Record:    pr,
+				Processed: true,
+				Error:     err.Error(),
+				ServerID:  cx.Base.ServerID,
+				ClientID:  cx.Base.ClientID,
+			})
+
+		}
+
+		responseJSON, err := json.Marshal(&records)
+		if err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Name),
+			bytes.ToLower(PatchMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Failed to send to clusters")
+		}
+
+		logger.Log(context, "RecordMW.READPATHS", "Completed")
+		return res, false, nil
+	})
+
+	// READALL handles all patch requests from the backend to patch/update a record.
+	du.Action("READALL", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
+		logger.Log(context, "RecordMW.READPATHS", "Started : Message[%+q]", m)
+
+		if len(m.Data) == 0 {
+			logger.Error(context, "RecordMW.READPATHS", netd.ErrEmptyData, "Completed")
+			return nil, true, netd.ErrEmptyData
+		}
+
+		switch {
+		case bytes.Equal(m.Data[0], netd.BeginMessage):
+			patchBuffer.on = true
+			for _, mdata := range m.Data[1:] {
+				patchBuffer.bu.Write(mdata)
+			}
+
+			logger.Log(context, "RecordMW.READPATHS", "Completed")
+			return netd.OkMessage, false, nil
+
+		case bytes.Equal(m.Data[0], netd.PayloadMessage):
+			for _, mdata := range m.Data[1:] {
+				patchBuffer.bu.Write(mdata)
+			}
+
+			logger.Log(context, "RecordMW.READPATHS", "Completed")
+			return netd.OkMessage, false, nil
+
+		case bytes.Equal(m.Data[0], netd.EndMessage):
+			if !patchBuffer.on {
+				logger.Error(context, "RecordMW.READPATHS", ErrInvalidPayloadState, "Completed")
+				return nil, true, ErrInvalidPayloadState
+			}
+
+			patchBuffer.on = false
+		default:
+			for _, mdata := range m.Data {
+				patchBuffer.bu.Write(mdata)
+			}
+		}
+
+		data := patchBuffer.bu.Bytes()
+		patchBuffer.bu.Reset()
+
+		var rec types.ReadAllRequest
+		if err := json.Unmarshal(data, &rec); err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			return nil, true, err
+		}
+
+		// Validate the version of the record request if it matches the standard for our
+		// versioner.
+		if err := versions.Validate(rec.Version); err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			return nil, true, err
+		}
+
+		var err error
+		var records []types.BaseResponse
+
+		responseJSON, err := json.Marshal(&records)
+		if err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Name),
+			bytes.ToLower(PatchMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.READPATHS", err, "Failed to send to clusters")
+		}
+
+		logger.Log(context, "RecordMW.READPATHS", "Completed")
 		return res, false, nil
 	})
 
@@ -630,7 +843,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		// Validate the version of the record request if it matches the standard for our
 		// versioner.
 		if err := versions.Validate(rec.Version); err != nil {
-			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
 			return nil, true, err
 		}
 
@@ -679,7 +892,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
-		patchedRecord, err := cache.Patch(rec)
+		patchedRecord, err := cache.Patch(rec.Name, rec.ID, rec.Deltas)
 		if err != nil {
 			logger.Error(context, "RecordMW.PATCH", err, "Completed")
 			return nil, true, err
@@ -725,14 +938,14 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 	})
 
 	des := netd.NewDelegation()
-	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
-	des.Action("UPDATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
-	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
-	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection)([]byte, bool, error){})
+	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
+	des.Action("REPLACE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
+	des.Action("DELETE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
+	des.Action("PATCH", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
 
 	return netd.NewDelegation(ev...).
 		Next("RECORDS", du).
-		Next("RECORDRES", dres).
+		Next("RECORDRES", des)
 }
 
 //==============================================================================
