@@ -403,6 +403,10 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 				return nil, true, err
 			}
 
+			if cacheRec.Deleted {
+				return nil, false, errors.New("Record Already Deleted")
+			}
+
 			// Request the version of the OldRecord be tested against the new record request
 			// if the versions are equal or the new request is older than the current version then
 			// can not allow this operation to continue.
@@ -419,6 +423,10 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			if err != nil {
 				logger.Error(context, "RecordMW.DELETE", err, "Completed")
 				return nil, true, err
+			}
+
+			if cacheRec.Deleted {
+				return nil, false, errors.New("Record Already Deleted")
 			}
 
 			// Request the version of the OldRecord be tested against the new record request
@@ -447,6 +455,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		responseJSON, err := json.Marshal(&types.BaseResponse{
 			Status:    true,
 			Processed: true,
+			Deleted:   true,
 			Record:    backendRec,
 			ClientID:  cx.Base.ClientID,
 			ServerID:  cx.Base.ServerID,
@@ -712,7 +721,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		}, []byte("."))
 		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
 
-		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReadPathMessage, responseJSON)
 		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
 			logger.Error(context, "RecordMW.READPATHS", err, "Failed to send to clusters")
 		}
@@ -757,7 +766,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			readAllBuffer.on = false
 		default:
 			for _, mdata := range m.Data {
-				readAllBuffer.Write(mdata)
+				readAllBuffer.bu.Write(mdata)
 			}
 		}
 
@@ -803,7 +812,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		}, []byte("."))
 		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
 
-		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReadAllMessage, responseJSON)
 		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
 			logger.Error(context, "RecordMW.READALL", err, "Failed to send to clusters")
 		}
@@ -880,13 +889,21 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			if rec.Whole {
 
 				if err := deltas.MatchedPath(record, rec.Matches); err != nil {
-					logger.Error(context, "RecordMW.READALLIN", err, "Failed to match record : %#v : Againts")
+					logger.Error(context, "RecordMW.READALLIN", err, "Failed to match record : %#v : Againts : %#v", record, rec.Matches)
 					continue
 				}
 
 				matchedRecords = append(matchedRecords, record)
 				continue
 			}
+
+			pathRecord, err := deltas.GetMatchedPath(record, rec.Matches)
+			if err != nil {
+				logger.Error(context, "RecordMW.READALLIN", err, "Failed to match record : %#v : Againts : %#v", record, rec.Matches)
+				continue
+			}
+
+			matchedRecords = append(matchedRecords, pathRecord)
 		}
 
 		responseJSON, err := json.Marshal(&types.AllResponse{
@@ -905,11 +922,11 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		topic := bytes.Join([][]byte{
 			[]byte("records"),
 			[]byte(rec.Name),
-			bytes.ToLower(ReadAllMessage),
+			bytes.ToLower(ReadAllInMessage),
 		}, []byte("."))
 		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
 
-		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReadAllInMessage, responseJSON)
 		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
 			logger.Error(context, "RecordMW.READALLIN", err, "Failed to send to clusters")
 		}
@@ -1042,12 +1059,13 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 			return nil, true, err
 		}
 
-		responseJSON, err := json.Marshal(&types.BaseResponse{
+		responseJSON, err := json.Marshal(&types.DeltaResponse{
 			Status:    true,
-			Record:    patchedRecord,
 			Processed: true,
+			Updated:   patchedRecord,
 			ServerID:  cx.Base.ServerID,
 			ClientID:  cx.Base.ClientID,
+			Deltas:    rec.Deltas,
 		})
 
 		if err != nil {
@@ -1062,7 +1080,7 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 		}, []byte("."))
 		cx.Router.Handle(context, topic, responseJSON, *cx.Base)
 
-		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, responseJSON)
+		res := netd.WrapResponseBlock(RecordResponseMessage, PatchMessage, responseJSON)
 		if err := cx.SendToClusters(context, cx.Base.ClientID, res, true); err != nil {
 			logger.Error(context, "RecordMW.PATCH", err, "Failed to send to clusters")
 		}
@@ -1072,10 +1090,133 @@ func RecordMW(tracer netd.Trace, logger netd.Logger, versions types.Versions, ca
 	})
 
 	des := netd.NewDelegation()
-	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
-	des.Action("REPLACE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
-	des.Action("DELETE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
-	des.Action("PATCH", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {})
+	des.Action("CREATE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
+		logger.Log(context, "RecordMW.CREATE", "Started : RECORDRES : %#v", m)
+
+		if len(m.Data) != 1 {
+			err := errors.New("Invalid data length expected a single length item")
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
+		}
+
+		var rec types.BaseResponse
+		if err := json.Unmarshal(m.Data[0], &rec); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Record.Name),
+			bytes.ToLower(CreateMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, m.Data[0], *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, CreateMessage, m.Data[0])
+		if err := cx.SendToClients(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.CREATE", err, "Failed to send to clusters")
+			return nil, true, err
+		}
+
+		logger.Log(context, "RecordMW.CREATE", "Completed")
+		return netd.OkMessage, false, nil
+	})
+
+	des.Action("REPLACE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
+		logger.Log(context, "RecordMW.REPLACE", "Started : RECORDRES : %#v", m)
+
+		if len(m.Data) != 1 {
+			err := errors.New("Invalid data length expected a single length item")
+			logger.Error(context, "RecordMW.REPLACE", err, "Completed")
+			return nil, true, err
+		}
+
+		var rec types.ReplaceResponse
+		if err := json.Unmarshal(m.Data[0], &rec); err != nil {
+			logger.Error(context, "RecordMW.REPLACE", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.New.Name),
+			bytes.ToLower(ReplaceMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, m.Data[0], *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, ReplaceMessage, m.Data[0])
+		if err := cx.SendToClients(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.REPLACE", err, "Failed to send to clusters")
+			return nil, true, err
+		}
+
+		logger.Log(context, "RecordMW.REPLACE", "Completed")
+		return netd.OkMessage, false, nil
+	})
+
+	des.Action("DELETE", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
+		logger.Log(context, "RecordMW.DELETE", "Started : RECORDRES : %#v", m)
+
+		if len(m.Data) != 1 {
+			err := errors.New("Invalid data length expected a single length item")
+			logger.Error(context, "RecordMW.DELETE", err, "Completed")
+			return nil, true, err
+		}
+
+		var rec types.BaseResponse
+		if err := json.Unmarshal(m.Data[0], &rec); err != nil {
+			logger.Error(context, "RecordMW.DELETE", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Record.Name),
+			bytes.ToLower(DeleteMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, m.Data[0], *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, DeleteMessage, m.Data[0])
+		if err := cx.SendToClients(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.DELETE", err, "Failed to send to clusters")
+			return nil, true, err
+		}
+
+		logger.Log(context, "RecordMW.DELETE", "Completed")
+		return netd.OkMessage, false, nil
+	})
+
+	des.Action("PATCH", func(context interface{}, m netd.Message, cx *netd.Connection) ([]byte, bool, error) {
+		logger.Log(context, "RecordMW.PATCH", "Started : RECORDRES : %#v", m)
+
+		if len(m.Data) != 1 {
+			err := errors.New("Invalid data length expected a single length item")
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		var rec types.DeltaResponse
+		if err := json.Unmarshal(m.Data[0], &rec); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Completed")
+			return nil, true, err
+		}
+
+		topic := bytes.Join([][]byte{
+			[]byte("records"),
+			[]byte(rec.Updated.Name),
+			bytes.ToLower(PatchMessage),
+		}, []byte("."))
+		cx.Router.Handle(context, topic, m.Data[0], *cx.Base)
+
+		res := netd.WrapResponseBlock(RecordResponseMessage, PatchMessage, m.Data[0])
+		if err := cx.SendToClients(context, cx.Base.ClientID, res, true); err != nil {
+			logger.Error(context, "RecordMW.PATCH", err, "Failed to send to clusters")
+			return nil, true, err
+		}
+
+		logger.Log(context, "RecordMW.PATCH", "Completed")
+		return netd.OkMessage, false, nil
+	})
 
 	return netd.NewDelegation(ev...).
 		Next("RECORDS", du).

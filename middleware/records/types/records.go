@@ -115,6 +115,7 @@ type BaseResponse struct {
 	ClientID  string `json:"client_id"`
 	Status    bool   `json:"status,omitempty"`
 	Processed bool   `json:"processed,omitempty"`
+	Deleted   bool   `json:"deleted,omitempty"`
 	Record    Record `json:"record"`
 	Error     string `json:"error,omitempty"`
 }
