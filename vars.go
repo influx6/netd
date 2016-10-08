@@ -104,6 +104,10 @@ var (
 	// EndMessage defines the header send to indicate message end.
 	EndMessage = []byte("+MSGED")
 
+	// PayloadMessage defines the header used when sending group data over the
+	// connection which must always return OK message once received.
+	PayloadMessage = []byte("+PAYLOAD")
+
 	// DataMessage defines the header send to indicate a published event/data.
 	DataMessage = []byte("+DATA")
 
@@ -146,6 +150,9 @@ var (
 	// ErrNoResponse signify the error sent when no response was recieved within
 	// defined limits.
 	ErrNoResponse = errors.New("Failed to recieve response")
+
+	// ErrEmptyData defines the error sent when expected data but receives a emtpy byte slice.
+	ErrEmptyData = errors.New("Empty data received, expected data")
 
 	// ErrInvalidInfo defines the error sent when info data was invalid json.
 	ErrInvalidInfo = errors.New("Failed to unmarshal info data")

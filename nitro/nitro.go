@@ -65,7 +65,6 @@ var (
 	pingMessage = []byte("PING")
 	pongMessage = []byte("P0NG")
 	connect     = []byte("CONNECT")
-	payload     = []byte("PAYLOAD")
 )
 
 // Nitro implements a netd.RequestResponse interface, providing methods to handle
@@ -282,7 +281,7 @@ func (n *Nitro) HandlePayload(context interface{}, data [][]byte, cx *netd.Conne
 		n.payload.Write(da)
 	}
 
-	if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(payload, data...), true); err != nil {
+	if err := cx.SendToClusters(context, cx.Base.ClientID, netd.WrapResponseBlock(netd.PayloadMessage, data...), true); err != nil {
 		n.Error(context, "Nitro.HandlePayload", err, "Completed")
 		return nil, true, err
 	}
@@ -577,20 +576,6 @@ func (n *Nitro) HandleErrors(context interface{}, data [][]byte, cx *netd.Connec
 	return nil, true, nil
 }
 
-// HandleEvents connects to the connection event provider to listening for
-// connects and disconnects.
-func (n *Nitro) HandleEvents(context interface{}, cx netd.ConnectionEvents) error {
-	n.Log(context, "Nitro.HandleEvents", "Started")
-
-	if n.Next != nil {
-		n.Log(context, "Nitro.HandleEvents", "Completed")
-		return n.Next.HandleEvents(context, cx)
-	}
-
-	n.Log(context, "Nitro.HandleEvents", "Completed")
-	return nil
-}
-
 // HandleFire handles response to be sent when a route fires off with the providers
 // fire method. This returns the expected response.
 func (n *Nitro) HandleFire(context interface{}, message *netd.SubMessage) ([]byte, error) {
@@ -655,7 +640,7 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 	case bytes.Equal(message.Command, unsub):
 		return n.HandleUnsubscribe(context, message.Data, cx)
 
-	case bytes.Equal(message.Command, payload):
+	case bytes.Equal(message.Command, netd.PayloadMessage):
 		return n.HandlePayload(context, message.Data, cx)
 
 	case bytes.Equal(message.Command, netd.ErrMessage):
@@ -737,6 +722,20 @@ func (n *Nitro) Process(context interface{}, cx *netd.Connection, messages ...ne
 
 	n.Log(context, "Nitro.Process", "Completed")
 	return false, nil
+}
+
+// HandleEvents connects to the connection event provider to listening for
+// connects and disconnects.
+func (n *Nitro) HandleEvents(context interface{}, cx netd.ConnectionEvents) error {
+	n.Log(context, "Nitro.HandleEvents", "Started")
+
+	if n.Next != nil {
+		n.Log(context, "Nitro.HandleEvents", "Completed")
+		return n.Next.HandleEvents(context, cx)
+	}
+
+	n.Log(context, "Nitro.HandleEvents", "Completed")
+	return nil
 }
 
 // payloadMode returns true/false if the nitro parser in in payload mode, where
