@@ -19,10 +19,10 @@ type Cache interface {
 
 // Deltas defines an interface that allows certain operations on the Records received.
 type Deltas interface {
-	Patch(Record, deltas []Delta) (Record, error)
-	GetPaths(Record, deltas []Delta) (Record, error)
-	MatchedPath(Record, deltas []Delta) error
-	GetMatchedPath(Record, deltas []Delta) (Record, error)
+	Patch(record Record, deltas []Delta) (Record, error)
+	GetPaths(record Record, deltas []Delta) (Record, error)
+	MatchedPath(record Record, deltas []Delta) error
+	GetMatchedPath(record Record, deltas []Delta) (Record, error)
 }
 
 // Backend defines an interface which allows exposing a front through which records
@@ -49,7 +49,7 @@ type Record struct {
 	Version string                 `json:"version"`
 	ID      string                 `json:"record_id"`
 	Name    string                 `json:"record_name"`
-	Deleted bool                   `json:"deleted"`
+	Deleted bool                   `json:"deleted,omitempty"`
 	Data    map[string]interface{} `json:"record_data"`
 }
 
@@ -80,13 +80,15 @@ type DeltaReadRequest struct {
 
 // ReadAllRequest defines the response/request recieved for a read operation.
 type ReadAllRequest struct {
-	Name     string `json:"record_name"`
-	Page     int    `json:"page"`
-	Total    int    `json:"total"`
-	Order    int    `json:"order"`
-	Version  string `json:"version"`
-	ServerID string `json:"server_id"`
-	ClientID string `json:"client_id"`
+	Name     string  `json:"record_name"`
+	Page     int     `json:"page"`
+	Total    int     `json:"total"`
+	Order    string  `json:"order"`
+	Version  string  `json:"version"`
+	ServerID string  `json:"server_id"`
+	ClientID string  `json:"client_id"`
+	Matches  []Delta `json:"matches,omitempty"`
+	Whole    bool    `json:"whole,omitempty"`
 }
 
 // ReadRequest defines the response/request recieved for a read operation.
@@ -123,7 +125,7 @@ type AllResponse struct {
 	ClientID  string   `json:"client_id"`
 	Status    bool     `json:"status,omitempty"`
 	Processed bool     `json:"processed,omitempty"`
-	Record    []Record `json:"records"`
+	Records   []Record `json:"records"`
 	Error     string   `json:"error,omitempty"`
 }
 
