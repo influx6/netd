@@ -70,7 +70,6 @@ type Messager interface {
 	Send(context interface{}, flush bool, msg ...[]byte) error
 	SendError(context interface{}, flush bool, msg ...error) error
 	SendMessage(context interface{}, msg []byte, flush bool) error
-	// SendBlock(context interface{}, flush bool, msg ...[]byte) error
 }
 
 // Connection defines a baselevel struct for storing connection details
