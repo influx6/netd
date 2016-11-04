@@ -674,7 +674,7 @@ func (n *Nitro) HandleMessage(context interface{}, cx *netd.Connection, message 
 // Process implements the netd.RequestResponse.Process method which process all
 // incoming messages.
 func (n *Nitro) Process(context interface{}, cx *netd.Connection, messages ...netd.Message) (bool, error) {
-	n.Log(context, "Nitro.Process", "Started : From{Client: %s, Server: %s} :  Messages {%+q}", cx.Base.ID(), cx.Server.ID(), messages)
+	n.Log(context, "Nitro.Process", "Started : From{Client: %s, Server: %s} :  Messages {   %+q  }", cx.Base.ID(), cx.Server.ID(), messages)
 
 	var responses [][]byte
 

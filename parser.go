@@ -169,6 +169,8 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 		return nil, errors.New("Expected message block/blocks should be enclosed in '{','}'")
 	}
 
+	var blockStartFound = 0
+
 	{
 	blockLoop:
 		for i := 0; i < msgLen; i++ {
@@ -200,6 +202,7 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 			case '{':
 				if messageStart {
 					block = append(block, item)
+					blockStartFound++
 					continue
 				}
 
@@ -212,15 +215,16 @@ func (blockMessage) SplitMultiplex(msg []byte) ([][]byte, error) {
 					return nil, errors.New("Invalid Start of block")
 				}
 
-				// Are we at message end and do are we starting a new block?
+				// Are we at message end and are  we starting a new block?
 				if i+1 >= msgLen {
+					block = append(block, item)
 					blocks = append(blocks, block)
 					block = nil
 					break
 				}
 
 				if msg[i+1] == ':' && i+2 >= msgLen {
-					return nil, errors.New("Invalid new Block start")
+					return nil, errors.New("Invalid new Block end and start")
 				}
 
 				if msg[i+1] == ':' && msg[i+2] == '{' {
@@ -332,6 +336,10 @@ func WrapResponseBlock(header []byte, msgs ...[]byte) []byte {
 // WrapResponse wraps each byte slice in the multiple byte slice with with
 // given header returning a single byte slice joined with a colon : symbol.
 func WrapResponse(header []byte, msgs ...[]byte) []byte {
+	if len(msgs) == 0 {
+		return WrapBlock(header)
+	}
+
 	var responses [][]byte
 
 	for _, block := range msgs {

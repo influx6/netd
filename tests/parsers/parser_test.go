@@ -1,4 +1,4 @@
-package netd_test
+package parsers
 
 import (
 	"fmt"
